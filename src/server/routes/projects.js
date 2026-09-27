@@ -2,6 +2,8 @@ import express from 'express';
 import crypto from 'node:crypto';
 import { getDatabase } from '../db/database.js';
 import { requireParticipant, requireAuth } from '../middleware/auth.js';
+import { recordVerifiableEvent } from '../services/verification.js';
+import { dispatchWebhooks } from '../services/webhook.js';
 
 const router = express.Router();
 
@@ -341,6 +343,29 @@ router.post('/api/projects/:id/submit', requireParticipant, (req, res) => {
     INSERT INTO audit_logs (id, actor_user_id, action, entity_type, entity_id, details_json)
     VALUES (?, ?, 'PROJECT_SUBMITTED', 'projects', ?, ?)
   `).run('aud_' + crypto.randomBytes(6).toString('hex'), req.user.id, project.id, JSON.stringify({ submitted_at: now }));
+
+  // Create verifiable cryptographic audit record for submission
+  try {
+    recordVerifiableEvent(db, {
+      entityType: 'submission',
+      entityId: project.id,
+      payload: {
+        project_id: project.id,
+        team_id: project.team_id,
+        submitted_at: now,
+      },
+      signerIdentity: 'dogfood:submission_authority:2026',
+    });
+  } catch (err) {
+    console.warn('Failed to record verifiable submission event:', err.message);
+  }
+
+  // Asynchronously dispatch project.submitted webhooks
+  dispatchWebhooks(db, project.event_id, 'project.submitted', {
+    project_id: project.id,
+    team_id: project.team_id,
+    submitted_at: now,
+  }).catch(() => {});
 
   res.json({ message: 'Project submitted successfully' });
 });
