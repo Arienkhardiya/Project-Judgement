@@ -1,0 +1,9 @@
+node_modules
+.git
+.pnpm-store
+hackathon.db
+hackathon.db-wal
+hackathon.db-shm
+dist
+.system_generated
+*.log

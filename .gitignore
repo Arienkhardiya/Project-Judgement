@@ -1,0 +1,13 @@
+node_modules/
+dist/
+hackathon.db
+hackathon.db-wal
+hackathon.db-shm
+*.db
+*.db-wal
+*.db-shm
+.pnpm-store
+.system_generated
+*.log
+.DS_Store
+Thumbs.db
