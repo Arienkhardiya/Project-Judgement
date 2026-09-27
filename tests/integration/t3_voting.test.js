@@ -41,8 +41,8 @@ describe('Milestone 3 - T3 Community Voting & Anti-Abuse Integration Tests', () 
       body: JSON.stringify({
         event_id: 'evt_01',
         title: 'Open Hack Community Voting',
-        start_time: '2026-02-27T00:00:00Z',
-        end_time: '2026-03-05T00:00:00Z',
+        start_time: new Date(Date.now() - 86400000).toISOString(),
+        end_time: new Date(Date.now() + 7 * 86400000).toISOString(),
         is_active: 1
       })
     });

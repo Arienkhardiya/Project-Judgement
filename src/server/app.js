@@ -36,6 +36,15 @@ export function createApp() {
     app.use(express.static(distPath));
   }
 
+  // Health check endpoint for readiness and container monitoring
+  app.get('/api/health', (req, res) => {
+    res.json({
+      status: 'ok',
+      uptime: process.uptime(),
+      timestamp: new Date().toISOString()
+    });
+  });
+
   // API Routes
   app.use('/api/auth', authRoutes);
   app.use('/api/events', eventRoutes);

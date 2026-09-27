@@ -53,15 +53,28 @@ A high-integrity, production-grade hackathon submission and judging platform eng
 
 ---
 
-## Quick Start & Local Execution
+## Quick Start & Fresh-Machine Setup
 
-### 1. With Docker (Recommended for Self-Hosting)
+### Prerequisites
+- **Git**
+- **Docker Desktop** (running)
+
+### Run (Recommended)
 ```bash
 docker compose up -d --build
 ```
-The portal starts on `http://localhost:8080`.
 
-### 2. Direct Node.js Execution
+### Open
+Navigate in your browser to:
+[http://localhost:8080](http://localhost:8080)
+
+### Troubleshooting
+```bash
+docker compose ps
+docker compose logs --tail=100 portal
+```
+
+### Alternative: Direct Node.js Execution (No Docker)
 ```bash
 # 1. Install dependencies
 pnpm install
