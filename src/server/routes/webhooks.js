@@ -2,6 +2,7 @@ import express from 'express';
 import crypto from 'node:crypto';
 import { getDatabase } from '../db/database.js';
 import { requireRole } from '../middleware/auth.js';
+import { deliverWebhook } from '../services/webhook.js';
 
 const router = express.Router();
 
@@ -45,12 +46,62 @@ router.post('/', requireRole('organizer', 'admin'), (req, res) => {
       url,
       event_type,
       secret, // Provided once on creation for signature validation
-      created_at: new Date().toISOString()
-    }
+      created_at: new Date().toISOString(),
+    },
   });
 });
 
-// 3. DELETE /api/webhooks/:id - Remove webhook (Organizer only)
+// 3. GET /api/webhooks/deliveries - List recent webhook deliveries (Organizer only)
+router.get('/deliveries', requireRole('organizer', 'admin'), (req, res) => {
+  const db = getDatabase();
+  const { webhook_id, limit = 50 } = req.query;
+
+  let query = `
+    SELECT wd.id, wd.webhook_id, wd.event_type, wd.status_code, wd.delivered_at, w.url
+    FROM webhook_deliveries wd
+    JOIN webhooks w ON w.id = wd.webhook_id
+    WHERE 1=1
+  `;
+  const params = [];
+
+  if (webhook_id) {
+    query += ` AND wd.webhook_id = ?`;
+    params.push(webhook_id);
+  }
+
+  query += ` ORDER BY wd.delivered_at DESC LIMIT ?`;
+  params.push(Number(limit));
+
+  const deliveries = db.prepare(query).all(...params);
+  res.json({ deliveries });
+});
+
+// 4. POST /api/webhooks/:id/test - Trigger immediate test ping for a registered webhook (Organizer only)
+router.post('/:id/test', requireRole('organizer', 'admin'), async (req, res) => {
+  const db = getDatabase();
+  const { id } = req.params;
+
+  const hook = db.prepare('SELECT id, event_id, url, event_type, secret FROM webhooks WHERE id = ?').get(id);
+  if (!hook) {
+    return res.status(404).json({ error: 'Webhook not found' });
+  }
+
+  const testPayload = {
+    test: true,
+    ping_id: `ping_${crypto.randomBytes(4).toString('hex')}`,
+    triggered_by: req.user.id,
+    message: 'DOGFOOD 2026 webhook test delivery ping',
+  };
+
+  const deliveryResult = await deliverWebhook(hook, 'webhook.test', testPayload, db);
+
+  res.json({
+    message: 'Webhook test executed',
+    delivery: deliveryResult,
+  });
+});
+
+// 5. DELETE /api/webhooks/:id - Remove webhook (Organizer only)
 router.delete('/:id', requireRole('organizer', 'admin'), (req, res) => {
   const db = getDatabase();
   const { id } = req.params;

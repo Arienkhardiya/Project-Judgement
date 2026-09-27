@@ -57,4 +57,35 @@ describe('CSV Generation Service Tests', () => {
     assert.ok(csv.includes('"Project, with comma and ""quotes"""'));
     assert.ok(csv.includes('"Team, Inc."'));
   });
+
+  it('neutralizes formula injection characters (=, +, -, @, \\t) to prevent CWE-1236', () => {
+    const maliciousProjects = [
+      {
+        rank: 1,
+        project_id: 'prj_evil',
+        title: "=cmd|' /C calc'!A0",
+        team_name: '+SUM(A1:A10)',
+        track_id: '@admin_exfil',
+        track_name: '-10% discount',
+        reviews_count: 1,
+        raw_avg_score: 5.0,
+        normalized_score: 5.0,
+        final_score: 5.0,
+        submitted_at: '2026-02-28T00:00:00Z',
+        repo_url: "\t=HYPERLINK(\"http://evil.com\")",
+      },
+    ];
+
+    const csv = generateResultsCsv(maliciousProjects);
+    // Formula triggers must be prefixed with a single quote '
+    assert.ok(csv.includes("'=cmd|' /C calc'!A0"));
+    assert.ok(csv.includes("'+SUM(A1:A10)"));
+    assert.ok(csv.includes("'@admin_exfil"));
+    assert.ok(csv.includes("'-10% discount"));
+    assert.ok(csv.includes("'\t=HYPERLINK"));
+
+    // Numbers must remain unquoted and unescaped
+    assert.ok(csv.includes('1,prj_evil'));
+    assert.ok(csv.includes(',5,5,5,'));
+  });
 });

@@ -2,6 +2,7 @@ import express from 'express';
 import crypto from 'node:crypto';
 import { getDatabase } from '../db/database.js';
 import { requireAuth, requireJudge, requireOrganizer } from '../middleware/auth.js';
+import { recordVerifiableEvent } from '../services/verification.js';
 
 const router = express.Router();
 
@@ -294,6 +295,26 @@ router.post('/scores', requireJudge, (req, res) => {
     scoreId,
     JSON.stringify({ project_id, status: scoreStatus })
   );
+
+  // 8. Verifiable cryptographic record for completed evaluation
+  if (scoreStatus === 'SUBMITTED') {
+    try {
+      recordVerifiableEvent(db, {
+        entityType: 'score',
+        entityId: scoreId,
+        payload: {
+          score_id: scoreId,
+          project_id,
+          judge_id: currentJudgeId,
+          criteria: criteria || {},
+          submitted_at: now,
+        },
+        signerIdentity: 'dogfood:judging_authority:2026',
+      });
+    } catch (err) {
+      console.warn('Failed to record verifiable score event:', err.message);
+    }
+  }
 
   res.status(score ? 200 : 201).json({
     message: scoreStatus === 'SUBMITTED' ? 'Score submitted successfully' : 'Draft score saved',

@@ -2,10 +2,20 @@
  * RFC 4180 Compliant CSV Formatter
  */
 
-function escapeCsvField(val) {
+export function escapeCsvField(val) {
   if (val === null || val === undefined) return '';
-  const str = String(val);
-  // If string contains comma, double-quote, or newline, escape it
+  if (typeof val === 'number') return String(val);
+
+  let str = String(val);
+
+  // CSV Formula Injection Defense (CWE-1236):
+  // Spreadsheet applications (Excel, Calc) execute formulas if a cell starts with =, +, -, @, \t, or \r.
+  // Prepending a single quote neutralizes formula execution.
+  if (/^[=\+\-@\t\r]/.test(str)) {
+    str = `'${str}`;
+  }
+
+  // RFC 4180 escaping
   if (str.includes(',') || str.includes('"') || str.includes('\n') || str.includes('\r')) {
     return `"${str.replace(/"/g, '""')}"`;
   }
