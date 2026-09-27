@@ -11,3 +11,6 @@ hackathon.db-shm
 *.log
 .DS_Store
 Thumbs.db
+*.pem
+.keys/
+keys/
