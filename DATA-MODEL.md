@@ -187,25 +187,30 @@ This design guarantees:
 #### `verifiable_records` (T4)
 | Column | Type | Constraints | Description |
 |---|---|---|---|
-| `id` | TEXT | PRIMARY KEY | Audit verification ID |
+| `id` | TEXT | PRIMARY KEY | Audit verification ID (`vrf_...`) |
 | `entity_type` | TEXT | NOT NULL | 'score', 'submission', 'certificate' |
 | `entity_id` | TEXT | NOT NULL | Target entity identifier |
 | `digest` | TEXT | NOT NULL | SHA256 canonical hash of metadata payload |
-| `signature` | TEXT | UNIQUE, NOT NULL | HMAC-SHA256 signature signed by authority |
-| `signer_identity` | TEXT | NOT NULL | Authority key identifier |
-| `metadata_json` | TEXT | NOT NULL | Immutable JSON payload |
+| `signature` | TEXT | UNIQUE, NOT NULL | Ed25519 128-hex signature (or 64-hex legacy HMAC) |
+| `signer_identity` | TEXT | NOT NULL | Authority key identifier (e.g. `dogfood:authority:2026`) |
+| `metadata_json` | TEXT | NOT NULL | Immutable canonical JSON payload |
+| `created_at` | TEXT | NOT NULL | UTC record timestamp |
 
 #### `webhooks` & `webhook_deliveries` (T4)
-| Table | Column | Type | Constraints |
-|---|---|---|---|
-| `webhooks` | `id` | TEXT | PRIMARY KEY |
-| `webhooks` | `event_id` | TEXT | NOT NULL, FK `events(id)` |
-| `webhooks` | `url` | TEXT | NOT NULL |
-| `webhooks` | `event_type` | TEXT | NOT NULL |
-| `webhooks` | `secret` | TEXT | NOT NULL |
-| `webhook_deliveries` | `id` | TEXT | PRIMARY KEY |
-| `webhook_deliveries` | `webhook_id` | TEXT | FK `webhooks(id)` |
-| `webhook_deliveries` | `status_code` | INTEGER | Delivery response status |
+| Table | Column | Type | Constraints | Description |
+|---|---|---|---|---|
+| `webhooks` | `id` | TEXT | PRIMARY KEY | Webhook registration identifier |
+| `webhooks` | `event_id` | TEXT | NOT NULL, FK `events(id)` | Target hackathon event |
+| `webhooks` | `url` | TEXT | NOT NULL | Destination HTTP/HTTPS endpoint |
+| `webhooks` | `event_type` | TEXT | NOT NULL | Subscribed event type or `*` |
+| `webhooks` | `secret` | TEXT | NOT NULL | Webhook secret for HMAC payload signing |
+| `webhooks` | `is_active` | INTEGER | DEFAULT 1 | Active delivery flag |
+| `webhook_deliveries` | `id` | TEXT | PRIMARY KEY | Delivery receipt identifier |
+| `webhook_deliveries` | `webhook_id` | TEXT | FK `webhooks(id)` | Associated webhook |
+| `webhook_deliveries` | `event_type` | TEXT | NOT NULL | Dispatched event type |
+| `webhook_deliveries` | `payload_json` | TEXT | NOT NULL | Dispatched JSON payload |
+| `webhook_deliveries` | `status_code` | INTEGER | | HTTP status code received (0 on network fail) |
+| `webhook_deliveries` | `delivered_at` | TEXT | NOT NULL | Delivery UTC timestamp |
 
 
 ---
@@ -228,4 +233,5 @@ The CSV generator (`src/server/services/csv.js`) outputs RFC 4180 compliant text
 ```csv
 rank,project_id,title,team_name,track_id,track_name,reviews_count,raw_avg_score,normalized_score,final_score,submission_time,repo_url
 ```
-All fields containing commas, quotes, or newlines are wrapped in double quotes, with internal quotes escaped as `""`.
+- **RFC 4180 Escaping:** All fields containing commas, quotes, or newlines are wrapped in double quotes, with internal quotes escaped as `""`.
+- **Formula Injection Defense (CWE-1236):** Any string starting with formula execution trigger characters (`=`, `+`, `-`, `@`, `\t`, `\r`) is automatically prepended with a single quote `'` to neutralize arbitrary formula execution in spreadsheet applications (Microsoft Excel, LibreOffice Calc, Google Sheets). Numeric metrics (ranks, review counts, scores) remain untouched as raw numbers.

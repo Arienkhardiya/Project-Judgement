@@ -137,17 +137,28 @@ The system enforces strict server-side authorization:
 
 ## 7. Cryptographic Verification & Stretch Extensions (T4)
 
-1. **Tamper-Proof Audit Receipts:**
-   - Submissions, scores, and certificates are transformed into sorted, canonical JSON strings (`canonicalizeJson`) and hashed with SHA-256.
-   - An HMAC-SHA256 digital signature is produced using the event's master signing key (`signDigest(digest)`).
-   - Any external observer can verify that a record has not been altered via `/api/verify/record/:signature` with constant-time verification (`crypto.timingSafeEqual`).
+1. **Asymmetric Ed25519 Digital Signatures (Publicly Verifiable):**
+   - Submissions, judging scores, and certificates are transformed into sorted, canonical JSON strings (`canonicalizeJson`) and hashed with SHA-256.
+   - The platform digitally signs the canonical digest using an asymmetric **Ed25519** private key (`crypto.sign(null, digest, privateKey)`).
+   - The corresponding public key is openly distributed in standard SPKI PEM and raw 32-byte hex format via `GET /api/verify/public-key`.
+   - **Offline Independence:** Unlike symmetric HMAC schemes where verifiers require the secret key (risking signature forgery), third parties can verify Ed25519 signatures completely offline without possessing private authority secrets or making network calls to the server.
+   - **Verification Endpoints:**
+     - `GET /api/verify/public-key`: Distributes server public key.
+     - `GET /api/verify/record/:signature`: Returns verified record, algorithm (`Ed25519`), digest, and metadata.
+     - `POST /api/verify`: Independent verification for database records (`{ record_id }`) or arbitrary signed data (`{ payload, signature, public_key }`).
 
 2. **Digital Submission Certificates:**
-   - Submitted projects can generate cryptographic completion certificates (`/api/verify/certificate/:projectId`) containing the project digest, timestamp, and verifiable digital signature.
+   - Submitted projects can generate cryptographic completion certificates (`/api/verify/certificate/:projectId`) containing the project digest, timestamp, Ed25519 public key, and verifiable digital signature.
 
-3. **Webhooks Dispatcher:**
-   - Organizers can register webhook endpoints triggered on key hackathon events (`project.submitted`, `judging.completed`, `voting.closed`).
-   - Payloads are signed with an `X-Dogfood-Signature: sha256=...` header.
+3. **Webhooks Dispatcher & Audit Logging:**
+   - Organizers can register webhook endpoints triggered on key hackathon events (`project.submitted`, `judging.completed`, `voting.closed`, `webhook.test`).
+   - Every delivery includes:
+     - `X-Judgement-Event`: Event name
+     - `X-Judgement-Signature`: `sha256=<HMAC-SHA256>` signature of the canonical JSON payload computed with the webhook's secret
+     - `X-Judgement-Timestamp`: UTC timestamp
+   - The dispatcher (`src/server/services/webhook.js`) runs with an `AbortController` timeout (4s) so external endpoint latency or downtime never blocks platform operations.
+   - Every delivery outcome (HTTP status code, timestamp, payload) is stored in the `webhook_deliveries` database table and inspectable by organizers via `GET /api/webhooks/deliveries`.
+   - Organizers can trigger instant ping tests via `POST /api/webhooks/:id/test`.
 
 4. **Embeddable Gallery Widget:**
    - External partner sites or hackathon landing pages can embed the live project gallery using a lightweight iframe endpoint (`/embed/gallery`) with responsive styles and zero dependencies.
