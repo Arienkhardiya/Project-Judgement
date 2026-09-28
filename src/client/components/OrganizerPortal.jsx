@@ -12,11 +12,22 @@ export default function OrganizerPortal({ user }) {
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(null);
 
-  // Voting Windows State
+  // Voting Windows & Results State
   const [votingWindows, setVotingWindows] = useState([]);
   const [votingWindowsLoading, setVotingWindowsLoading] = useState(false);
   const [votingWindowForm, setVotingWindowForm] = useState({ title: '', start_time: '', end_time: '', is_active: true });
   const [votingWindowSubmitting, setVotingWindowSubmitting] = useState(false);
+  const [votingResults, setVotingResults] = useState(null);
+  const [votingResultsLoading, setVotingResultsLoading] = useState(false);
+  const [votingResultsError, setVotingResultsError] = useState(null);
+
+  // Comment Moderation State
+  const [moderationComments, setModerationComments] = useState([]);
+  const [moderationLoading, setModerationLoading] = useState(false);
+  const [moderationError, setModerationError] = useState(null);
+  const [moderationSuccess, setModerationSuccess] = useState(null);
+  const [moderationFilter, setModerationFilter] = useState('flagged'); // 'flagged' | 'all'
+  const [deletingCommentId, setDeletingCommentId] = useState(null);
 
   // Forms
   const [eventForm, setEventForm] = useState({ name: '', description: '', start_time: '', end_time: '', submissions_close: '' });
@@ -113,6 +124,74 @@ export default function OrganizerPortal({ user }) {
     }
   };
 
+  const loadVotingResults = async () => {
+    setVotingResultsLoading(true);
+    setVotingResultsError(null);
+    try {
+      const res = await fetch(`/api/voting/results?event_id=${encodeURIComponent(selectedEventId || 'evt_01')}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to load voting results');
+      setVotingResults(data);
+    } catch (err) {
+      setVotingResultsError(err.message || 'Failed to load voting results');
+    } finally {
+      setVotingResultsLoading(false);
+    }
+  };
+
+  const loadModerationComments = async () => {
+    setModerationLoading(true);
+    setModerationError(null);
+    try {
+      const projRes = await fetch('/api/projects');
+      const projData = await projRes.json();
+      const projects = projData.projects || [];
+
+      const commentPromises = projects.map(async (p) => {
+        try {
+          const res = await fetch(`/api/projects/${encodeURIComponent(p.id)}/comments`);
+          if (!res.ok) return [];
+          const data = await res.json();
+          return (data.comments || []).map(c => ({
+            ...c,
+            project_title: p.title,
+            project_id: p.id
+          }));
+        } catch {
+          return [];
+        }
+      });
+
+      const results = await Promise.all(commentPromises);
+      const allComments = results.flat().sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+      setModerationComments(allComments);
+    } catch (err) {
+      setModerationError(err.message || 'Failed to load comments for moderation');
+    } finally {
+      setModerationLoading(false);
+    }
+  };
+
+  const handleDeleteComment = async (commentId) => {
+    if (deletingCommentId) return;
+    setDeletingCommentId(commentId);
+    setModerationError(null);
+    setModerationSuccess(null);
+    try {
+      const res = await fetch(`/api/comments/${encodeURIComponent(commentId)}`, {
+        method: 'DELETE',
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to delete comment');
+      setModerationSuccess('Comment deleted successfully.');
+      setModerationComments(prev => prev.filter(c => c.id !== commentId));
+    } catch (err) {
+      setModerationError(err.message || 'Failed to delete comment');
+    } finally {
+      setDeletingCommentId(null);
+    }
+  };
+
   const handleSubTabChange = (tab) => {
     setSubTab(tab);
     setError(null);
@@ -121,7 +200,11 @@ export default function OrganizerPortal({ user }) {
     else if (tab === 'normalized') loadNormalized();
     else if (tab === 'audit') loadAudit();
     else if (tab === 'events') loadEvents();
-    else if (tab === 'voting') loadVotingWindows();
+    else if (tab === 'voting') {
+      loadVotingWindows();
+      loadVotingResults();
+    }
+    else if (tab === 'moderation') loadModerationComments();
   };
 
   const handleCreateVotingWindow = async (e) => {
@@ -215,7 +298,7 @@ export default function OrganizerPortal({ user }) {
       {success && <div className="banner" style={{ background: '#064e3b', border: '1px solid #10b981', color: '#d1fae5' }}>{success}</div>}
 
       {/* Sub Tabs */}
-      <div style={{ display: 'flex', gap: '0.5rem', borderBottom: '1px solid var(--surface-border)', marginBottom: '1.5rem' }}>
+      <div style={{ display: 'flex', gap: '0.5rem', borderBottom: '1px solid var(--surface-border)', marginBottom: '1.5rem', flexWrap: 'wrap' }}>
         <button className={`nav-link ${subTab === 'dashboard' ? 'active' : ''}`} onClick={() => handleSubTabChange('dashboard')}>
           Judging Progress Dashboard
         </button>
@@ -229,7 +312,10 @@ export default function OrganizerPortal({ user }) {
           Event & Track Config
         </button>
         <button className={`nav-link ${subTab === 'voting' ? 'active' : ''}`} onClick={() => handleSubTabChange('voting')}>
-          Community Voting
+          Community Voting & Results
+        </button>
+        <button className={`nav-link ${subTab === 'moderation' ? 'active' : ''}`} onClick={() => handleSubTabChange('moderation')}>
+          Comment Moderation
         </button>
       </div>
 
@@ -473,97 +559,323 @@ export default function OrganizerPortal({ user }) {
         </div>
       )}
 
-      {/* TAB 5: COMMUNITY VOTING */}
+      {/* TAB 5: COMMUNITY VOTING & RESULTS */}
       {subTab === 'voting' && (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(350px, 1fr))', gap: '1.5rem' }}>
-          <div className="card-panel">
-            <h2>Voting Windows</h2>
-            {votingWindowsLoading ? (
-              <div className="empty-state">Loading voting windows...</div>
-            ) : votingWindows.length === 0 ? (
-              <div className="empty-state">No voting windows configured for this event.</div>
-            ) : (
-              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.9rem' }}>
-                <thead>
-                  <tr style={{ borderBottom: '1px solid var(--surface-border)', color: 'var(--text-muted)', textAlign: 'left' }}>
-                    <th style={{ padding: '0.5rem 0' }}>Title</th>
-                    <th>Status</th>
-                    <th>Start</th>
-                    <th>End</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {votingWindows.map(w => (
-                    <tr key={w.id} style={{ borderBottom: '1px solid var(--surface-border)' }}>
-                      <td style={{ padding: '0.5rem 0', fontWeight: 600 }}>{w.title}</td>
-                      <td>
-                        <span className="status-badge" style={{ 
-                          background: w.current_status === 'OPEN' ? '#064e3b' : w.current_status === 'UPCOMING' ? '#1e3a8a' : '#1e293b',
-                          color: w.current_status === 'OPEN' ? '#10b981' : w.current_status === 'UPCOMING' ? '#93c5fd' : '#94a3b8',
-                          padding: '0.2rem 0.5rem',
-                          borderRadius: '4px',
-                          fontSize: '0.75rem',
-                          fontWeight: 'bold'
-                        }}>
-                          {w.current_status}
-                        </span>
-                      </td>
-                      <td style={{ color: 'var(--text-muted)' }}>{new Date(w.start_time).toLocaleString()}</td>
-                      <td style={{ color: 'var(--text-muted)' }}>{new Date(w.end_time).toLocaleString()}</td>
+        <div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(350px, 1fr))', gap: '1.5rem', marginBottom: '1.5rem' }}>
+            <div className="card-panel" style={{ marginBottom: 0 }}>
+              <h2>Voting Windows</h2>
+              {votingWindowsLoading ? (
+                <div className="empty-state">Loading voting windows...</div>
+              ) : votingWindows.length === 0 ? (
+                <div className="empty-state">No voting windows configured for this event.</div>
+              ) : (
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.9rem' }}>
+                  <thead>
+                    <tr style={{ borderBottom: '1px solid var(--surface-border)', color: 'var(--text-muted)', textAlign: 'left' }}>
+                      <th style={{ padding: '0.5rem 0' }}>Title</th>
+                      <th>Status</th>
+                      <th>Start</th>
+                      <th>End</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
+                  </thead>
+                  <tbody>
+                    {votingWindows.map(w => (
+                      <tr key={w.id} style={{ borderBottom: '1px solid var(--surface-border)' }}>
+                        <td style={{ padding: '0.5rem 0', fontWeight: 600 }}>{w.title}</td>
+                        <td>
+                          <span className="status-badge" style={{
+                            background: w.current_status === 'OPEN' ? '#064e3b' : w.current_status === 'UPCOMING' ? '#1e3a8a' : '#1e293b',
+                            color: w.current_status === 'OPEN' ? '#10b981' : w.current_status === 'UPCOMING' ? '#93c5fd' : '#94a3b8',
+                            padding: '0.2rem 0.5rem',
+                            borderRadius: '4px',
+                            fontSize: '0.75rem',
+                            fontWeight: 'bold'
+                          }}>
+                            {w.current_status}
+                          </span>
+                        </td>
+                        <td style={{ color: 'var(--text-muted)' }}>{new Date(w.start_time).toLocaleString()}</td>
+                        <td style={{ color: 'var(--text-muted)' }}>{new Date(w.end_time).toLocaleString()}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+
+            <div className="card-panel" style={{ marginBottom: 0 }}>
+              <h2>Create Voting Window</h2>
+              <form onSubmit={handleCreateVotingWindow}>
+                <div className="form-group">
+                  <label>Window Title</label>
+                  <input
+                    type="text"
+                    className="form-control"
+                    value={votingWindowForm.title}
+                    onChange={e => setVotingWindowForm({ ...votingWindowForm, title: e.target.value })}
+                    required
+                    placeholder="e.g. Community Choice Award Voting"
+                  />
+                </div>
+                <div className="form-group">
+                  <label>Start Time (Local)</label>
+                  <input
+                    type="datetime-local"
+                    className="form-control"
+                    value={votingWindowForm.start_time ? votingWindowForm.start_time.slice(0, 16) : ''}
+                    onChange={e => setVotingWindowForm({ ...votingWindowForm, start_time: e.target.value })}
+                    required
+                  />
+                </div>
+                <div className="form-group">
+                  <label>End Time (Local)</label>
+                  <input
+                    type="datetime-local"
+                    className="form-control"
+                    value={votingWindowForm.end_time ? votingWindowForm.end_time.slice(0, 16) : ''}
+                    onChange={e => setVotingWindowForm({ ...votingWindowForm, end_time: e.target.value })}
+                    required
+                  />
+                </div>
+                <div className="form-group" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1rem' }}>
+                  <input
+                    type="checkbox"
+                    id="voting-active-checkbox"
+                    checked={votingWindowForm.is_active}
+                    onChange={e => setVotingWindowForm({ ...votingWindowForm, is_active: e.target.checked })}
+                  />
+                  <label htmlFor="voting-active-checkbox" style={{ margin: 0 }}>Active (Visible to users)</label>
+                </div>
+                <button type="submit" className="btn" disabled={votingWindowSubmitting}>
+                  {votingWindowSubmitting ? 'Creating...' : 'Create Voting Window'}
+                </button>
+              </form>
+            </div>
           </div>
 
+          {/* Unblinded Community Voting Results */}
           <div className="card-panel">
-            <h2>Create Voting Window</h2>
-            <form onSubmit={handleCreateVotingWindow}>
-              <div className="form-group">
-                <label>Window Title</label>
-                <input 
-                  type="text" 
-                  className="form-control" 
-                  value={votingWindowForm.title} 
-                  onChange={e => setVotingWindowForm({ ...votingWindowForm, title: e.target.value })} 
-                  required 
-                  placeholder="e.g. Community Choice Award Voting"
-                />
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', flexWrap: 'wrap', gap: '0.5rem' }}>
+              <div>
+                <h2 style={{ margin: 0 }}>Unblinded Community Voting Leaderboard</h2>
+                <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', margin: '0.25rem 0 0 0' }}>
+                  Live voting tallies visible exclusively to organizers. Public voting results remain sealed while the voting window is open.
+                </p>
               </div>
-              <div className="form-group">
-                <label>Start Time (Local)</label>
-                <input 
-                  type="datetime-local" 
-                  className="form-control" 
-                  value={votingWindowForm.start_time ? votingWindowForm.start_time.slice(0, 16) : ''}
-                  onChange={e => setVotingWindowForm({ ...votingWindowForm, start_time: e.target.value })}
-                  required 
-                />
-              </div>
-              <div className="form-group">
-                <label>End Time (Local)</label>
-                <input 
-                  type="datetime-local" 
-                  className="form-control" 
-                  value={votingWindowForm.end_time ? votingWindowForm.end_time.slice(0, 16) : ''}
-                  onChange={e => setVotingWindowForm({ ...votingWindowForm, end_time: e.target.value })}
-                  required 
-                />
-              </div>
-              <div className="form-group" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1rem' }}>
-                <input 
-                  type="checkbox" 
-                  id="voting-active-checkbox"
-                  checked={votingWindowForm.is_active}
-                  onChange={e => setVotingWindowForm({ ...votingWindowForm, is_active: e.target.checked })}
-                />
-                <label htmlFor="voting-active-checkbox" style={{ margin: 0 }}>Active (Visible to users)</label>
-              </div>
-              <button type="submit" className="btn" disabled={votingWindowSubmitting}>
-                {votingWindowSubmitting ? 'Creating...' : 'Create Voting Window'}
+              <button
+                type="button"
+                className="btn btn-secondary"
+                style={{ padding: '0.35rem 0.75rem', fontSize: '0.8rem' }}
+                onClick={loadVotingResults}
+                disabled={votingResultsLoading}
+              >
+                {votingResultsLoading ? 'Refreshing...' : 'Refresh Results'}
               </button>
-            </form>
+            </div>
+
+            {votingResultsError && (
+              <div className="banner danger" style={{ marginBottom: '1rem', fontSize: '0.85rem' }}>
+                {votingResultsError}
+              </div>
+            )}
+
+            {votingResultsLoading && !votingResults ? (
+              <div className="empty-state">Loading unblinded voting results...</div>
+            ) : !votingResults || !votingResults.results || votingResults.results.length === 0 ? (
+              <div className="empty-state">No voting results available for this event yet.</div>
+            ) : (
+              <div>
+                <div style={{ display: 'flex', gap: '1rem', marginBottom: '1.25rem', flexWrap: 'wrap' }}>
+                  <div style={{ background: 'var(--surface-raised)', padding: '0.75rem 1.25rem', borderRadius: 'var(--radius)', border: '1px solid var(--surface-border)' }}>
+                    <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Window Status</div>
+                    <div style={{ fontWeight: 700, color: 'var(--primary)', marginTop: '0.2rem' }}>
+                      {votingResults.status}
+                    </div>
+                  </div>
+                  <div style={{ background: 'var(--surface-raised)', padding: '0.75rem 1.25rem', borderRadius: 'var(--radius)', border: '1px solid var(--surface-border)' }}>
+                    <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Total Votes Cast</div>
+                    <div style={{ fontWeight: 700, color: 'var(--success)', marginTop: '0.2rem' }}>
+                      {votingResults.total_votes}
+                    </div>
+                  </div>
+                  <div style={{ background: 'var(--surface-raised)', padding: '0.75rem 1.25rem', borderRadius: 'var(--radius)', border: '1px solid var(--surface-border)' }}>
+                    <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Organizer Privilege</div>
+                    <div style={{ fontWeight: 700, color: '#38bdf8', marginTop: '0.2rem' }}>
+                      Unblinded Real-Time
+                    </div>
+                  </div>
+                </div>
+
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.9rem' }}>
+                  <thead>
+                    <tr style={{ borderBottom: '1px solid var(--surface-border)', color: 'var(--text-muted)', textAlign: 'left' }}>
+                      <th style={{ padding: '0.5rem 0' }}>Rank</th>
+                      <th>Project Title</th>
+                      <th>Team Name</th>
+                      <th>Track</th>
+                      <th style={{ textAlign: 'right' }}>Community Votes</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {votingResults.results.map((r) => (
+                      <tr key={r.project_id} style={{ borderBottom: '1px solid var(--surface-border)' }}>
+                        <td style={{ padding: '0.5rem 0', fontWeight: 700, color: r.rank <= 3 ? 'var(--primary)' : 'inherit' }}>
+                          #{r.rank}
+                        </td>
+                        <td style={{ fontWeight: 600 }}>{r.title}</td>
+                        <td style={{ color: 'var(--text-muted)' }}>{r.team_name}</td>
+                        <td>
+                          {r.track_name ? <span className="track-tag">{r.track_name}</span> : <span style={{ color: 'var(--text-muted)' }}>—</span>}
+                        </td>
+                        <td style={{ textAlign: 'right', fontWeight: 700, color: r.vote_count > 0 ? 'var(--success)' : 'var(--text-muted)' }}>
+                          {r.vote_count}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* TAB 6: COMMENT MODERATION */}
+      {subTab === 'moderation' && (
+        <div>
+          <div className="card-panel">
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', flexWrap: 'wrap', gap: '0.75rem' }}>
+              <div>
+                <h2 style={{ margin: 0 }}>Community Feedback Moderation</h2>
+                <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', margin: '0.25rem 0 0 0' }}>
+                  Review reported comments, inspect feedback across projects, and permanently delete inappropriate content.
+                </p>
+              </div>
+
+              <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                <div style={{ display: 'inline-flex', background: 'var(--surface-raised)', borderRadius: 'var(--radius)', border: '1px solid var(--surface-border)', padding: '2px' }}>
+                  <button
+                    type="button"
+                    className="demo-btn"
+                    style={{
+                      background: moderationFilter === 'flagged' ? 'var(--primary)' : 'transparent',
+                      color: moderationFilter === 'flagged' ? '#000' : 'var(--text-muted)',
+                      border: 'none',
+                      fontWeight: 600
+                    }}
+                    onClick={() => setModerationFilter('flagged')}
+                  >
+                    Flagged ({moderationComments.filter(c => c.is_flagged).length})
+                  </button>
+                  <button
+                    type="button"
+                    className="demo-btn"
+                    style={{
+                      background: moderationFilter === 'all' ? 'var(--primary)' : 'transparent',
+                      color: moderationFilter === 'all' ? '#000' : 'var(--text-muted)',
+                      border: 'none',
+                      fontWeight: 600
+                    }}
+                    onClick={() => setModerationFilter('all')}
+                  >
+                    All Comments ({moderationComments.length})
+                  </button>
+                </div>
+
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  style={{ padding: '0.35rem 0.75rem', fontSize: '0.8rem' }}
+                  onClick={loadModerationComments}
+                  disabled={moderationLoading}
+                >
+                  {moderationLoading ? 'Refreshing...' : 'Refresh'}
+                </button>
+              </div>
+            </div>
+
+            {moderationError && (
+              <div className="banner danger" style={{ marginBottom: '1rem', fontSize: '0.85rem' }}>
+                {moderationError}
+              </div>
+            )}
+            {moderationSuccess && (
+              <div className="banner" style={{ background: '#064e3b', border: '1px solid #10b981', color: '#d1fae5', marginBottom: '1rem', fontSize: '0.85rem' }}>
+                {moderationSuccess}
+              </div>
+            )}
+
+            {moderationLoading && moderationComments.length === 0 ? (
+              <div className="empty-state">Loading comments for moderation review...</div>
+            ) : moderationComments.filter(c => moderationFilter === 'flagged' ? c.is_flagged : true).length === 0 ? (
+              <div className="empty-state">
+                {moderationFilter === 'flagged'
+                  ? 'No flagged comments requiring organizer review. All community feedback is currently in good standing.'
+                  : 'No community comments have been posted across projects yet.'}
+              </div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                {moderationComments
+                  .filter(c => moderationFilter === 'flagged' ? c.is_flagged : true)
+                  .map(c => (
+                    <div
+                      key={c.id}
+                      style={{
+                        background: 'var(--surface-raised)',
+                        border: c.is_flagged ? '1px solid var(--danger)' : '1px solid var(--surface-border)',
+                        borderRadius: 'var(--radius)',
+                        padding: '1rem'
+                      }}
+                    >
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.5rem', flexWrap: 'wrap', gap: '0.5rem' }}>
+                        <div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.25rem' }}>
+                            <span style={{ fontWeight: 600, color: 'var(--text-main)' }}>{c.author?.name || 'Anonymous User'}</span>
+                            {c.author?.roles?.length > 0 && (
+                              <span className={`role-badge ${c.author.roles[0] || 'visitor'}`} style={{ fontSize: '0.65rem' }}>
+                                {c.author.roles[0]}
+                              </span>
+                            )}
+                            <span style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>
+                              on project <strong>{c.project_title}</strong>
+                            </span>
+                          </div>
+                          <div style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>
+                            {c.created_at ? new Date(c.created_at).toLocaleString() : ''}
+                          </div>
+                        </div>
+
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                          {c.is_flagged ? (
+                            <span className="status-badge" style={{ background: '#7f1d1d', color: '#fca5a5', padding: '0.2rem 0.5rem', borderRadius: '4px', fontSize: '0.75rem', fontWeight: 600 }}>
+                              Flagged for Review
+                            </span>
+                          ) : (
+                            <span className="status-badge" style={{ background: '#1e293b', color: '#94a3b8', padding: '0.2rem 0.5rem', borderRadius: '4px', fontSize: '0.75rem' }}>
+                              Public
+                            </span>
+                          )}
+
+                          <button
+                            type="button"
+                            className="btn btn-danger"
+                            style={{ padding: '0.3rem 0.65rem', fontSize: '0.75rem' }}
+                            onClick={() => handleDeleteComment(c.id)}
+                            disabled={deletingCommentId === c.id}
+                          >
+                            {deletingCommentId === c.id ? 'Deleting...' : 'Delete Comment'}
+                          </button>
+                        </div>
+                      </div>
+
+                      <p style={{ margin: 0, fontSize: '0.9rem', color: '#cbd5e1', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                        {c.content}
+                      </p>
+                    </div>
+                  ))}
+              </div>
+            )}
           </div>
         </div>
       )}
