@@ -94,9 +94,11 @@ export default function App() {
         onClose={() => setIsLoginOpen(false)} 
         onLoginSuccess={(loggedUser) => {
           setUser(loggedUser);
-          if (loggedUser.roles.includes('organizer')) setActiveTab('organizer');
-          else if (loggedUser.roles.includes('judge')) setActiveTab('judge');
-          else if (loggedUser.roles.includes('participant')) setActiveTab('participant');
+          if (activeTab !== 'voting') {
+            if (loggedUser.roles.includes('organizer')) setActiveTab('organizer');
+            else if (loggedUser.roles.includes('judge')) setActiveTab('judge');
+            else if (loggedUser.roles.includes('participant')) setActiveTab('participant');
+          }
         }}
       />
     </div>
