@@ -7,12 +7,23 @@ const router = express.Router();
 
 // Rate limiting map for comment spam prevention
 const commentRateLimits = new Map();
-const COMMENT_COOLDOWN_MS = process.env.NODE_ENV === 'test' ? 0 : 3000;
 
-function isCommentSpam(userId) {
+export function _resetCommentRateLimits() {
+  commentRateLimits.clear();
+}
+
+export function getCommentCooldownMs() {
+  if (process.env.COMMENT_COOLDOWN_MS !== undefined) {
+    return parseInt(process.env.COMMENT_COOLDOWN_MS, 10);
+  }
+  return process.env.NODE_ENV === 'test' ? 0 : 3000;
+}
+
+export function isCommentSpam(userId) {
   const now = Date.now();
+  const cooldownMs = getCommentCooldownMs();
   const lastTime = commentRateLimits.get(userId) || 0;
-  if (now - lastTime < COMMENT_COOLDOWN_MS) {
+  if (now - lastTime < cooldownMs) {
     return true;
   }
   commentRateLimits.set(userId, now);

@@ -7,12 +7,23 @@ const router = express.Router();
 
 // Memory store for voter submission velocity rate limiting (IP / User ID)
 const recentVotes = new Map();
-const RATE_LIMIT_WINDOW_MS = process.env.NODE_ENV === 'test' ? 0 : 2000;
 
-function isRateLimited(key) {
+export function _resetVotingRateLimits() {
+  recentVotes.clear();
+}
+
+export function getRateLimitWindowMs() {
+  if (process.env.RATE_LIMIT_WINDOW_MS !== undefined) {
+    return parseInt(process.env.RATE_LIMIT_WINDOW_MS, 10);
+  }
+  return process.env.NODE_ENV === 'test' ? 0 : 2000;
+}
+
+export function isRateLimited(key) {
   const now = Date.now();
+  const windowMs = getRateLimitWindowMs();
   const lastTime = recentVotes.get(key) || 0;
-  if (now - lastTime < RATE_LIMIT_WINDOW_MS) {
+  if (now - lastTime < windowMs) {
     return true;
   }
   recentVotes.set(key, now);
