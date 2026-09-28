@@ -227,7 +227,9 @@ The ingestion script (`src/server/db/seed.js`) transforms `fixtures.json` as fol
 
 ---
 
-## 4. Export Pathway (CSV Format)
+## 4. Export & Import Pathways
+
+### CSV Results Export (RFC 4180)
 
 The CSV generator (`src/server/services/csv.js`) outputs RFC 4180 compliant text with stable columns:
 ```csv
@@ -235,3 +237,13 @@ rank,project_id,title,team_name,track_id,track_name,reviews_count,raw_avg_score,
 ```
 - **RFC 4180 Escaping:** All fields containing commas, quotes, or newlines are wrapped in double quotes, with internal quotes escaped as `""`.
 - **Formula Injection Defense (CWE-1236):** Any string starting with formula execution trigger characters (`=`, `+`, `-`, `@`, `\t`, `\r`) is automatically prepended with a single quote `'` to neutralize arbitrary formula execution in spreadsheet applications (Microsoft Excel, LibreOffice Calc, Google Sheets). Numeric metrics (ranks, review counts, scores) remain untouched as raw numbers.
+
+### Signed JSON Bulk Export & Import (T4)
+
+The bulk data service (`src/server/services/bulk.js`) provides complete state preservation:
+1. **Bulk Export (`GET /api/export.json`, `GET /api/organizer/export.json`):**
+   - Packages all event entities: metadata, tracks, prizes, teams, roster members, projects, rubrics, criteria, assignments, submitted scores, normalized rankings, and verifiable audit records.
+   - Includes an asymmetric Ed25519 digital signature over the canonical JSON payload (`audit.signature`, `audit.digest`, `audit.public_key`).
+2. **Bulk Import (`POST /api/organizer/import.json`):**
+   - Ingests event datasets transactionally within a single SQLite transaction (`BEGIN TRANSACTION` / `COMMIT`).
+   - Automatically resolves user identities across judge rosters and team memberships to maintain unique email constraints without data loss.

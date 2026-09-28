@@ -4,6 +4,7 @@ import { getDatabase } from '../db/database.js';
 import { requireOrganizer } from '../middleware/auth.js';
 import { calculateNormalization } from '../services/normalization.js';
 import { generateResultsCsv } from '../services/csv.js';
+import { exportEventData, importEventData } from '../services/bulk.js';
 
 const router = express.Router();
 
@@ -128,6 +129,40 @@ router.get('/export.csv', requireOrganizer, (req, res) => {
   res.setHeader('Content-Type', 'text/csv; charset=utf-8');
   res.setHeader('Content-Disposition', `attachment; filename="dogfood-results-${dateStr}.csv"`);
   res.status(200).send(csvContent);
+});
+
+// GET /api/organizer/export.json (or /api/export.json) - Full JSON Bulk Export (signed with Ed25519)
+router.get('/export.json', requireOrganizer, (req, res) => {
+  const db = getDatabase();
+  try {
+    const data = exportEventData(db, req.query.event_id || null);
+    const dateStr = new Date().toISOString().slice(0, 10);
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="dogfood-export-${dateStr}.json"`);
+    res.json(data);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/organizer/import.json - Full JSON Bulk Import with transaction safety
+router.post('/import.json', requireOrganizer, (req, res) => {
+  const db = getDatabase();
+  try {
+    const result = importEventData(db, req.body);
+    // Audit log
+    db.prepare(`
+      INSERT INTO audit_logs (id, actor_user_id, action, entity_type, entity_id, details_json)
+      VALUES (?, ?, 'BULK_IMPORT_EXECUTED', 'events', ?, ?)
+    `).run('aud_' + crypto.randomBytes(6).toString('hex'), req.user.id, result.event_id, JSON.stringify(result.counts));
+
+    res.status(201).json({
+      message: 'Bulk event import completed successfully',
+      ...result,
+    });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
 });
 
 // GET /api/organizer/audit - Audit trail
