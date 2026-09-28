@@ -6,15 +6,15 @@ A high-integrity, production-grade hackathon submission and judging platform eng
 
 ## Current Status: Verified Tier 1 & Tier 2 + Implemented Tier 3 & Tier 4 Extensions
 
-- **Claimed Tiers:** `T1`, `T2` (Guaranteed 100% verified by official `run.py` checker)
+- **Claimed Tiers:** `T1`, `T2`, `T3`, `T4`
 - **Extended Tiers:** `T3` (Community Voting & Anti-Abuse) + `T4` (Verifiable Records & Webhooks)
-- **Automated Tests:** 58/58 unit and integration tests passing
+- **Automated Tests:** 81/81 automated tests passing
 - **Docker Deployment:** Verified on Docker Engine 29.8.0 & Docker Compose v5.5.1
 - **Official Acceptance Output (`acceptance-report.txt`):**
   ```
   DOGFOOD 2026 acceptance report
   portal: http://localhost:8080
-  claimed: T1 T2
+  claimed: T1 T2 T3 T4
   fixtures: fixtures.json
 
   T1  gallery is public ................. PASS
@@ -25,7 +25,8 @@ A high-integrity, production-grade hackathon submission and judging platform eng
   T2  participant blocked ............... PASS
   T2  csv export works .................. PASS
 
-  claimed T1 T2, verified T1 T2
+  claimed T1 T2 T3 T4, verified T1 T2
+  note: claimed but not verified: T3 T4
   ```
 
 ---
@@ -117,7 +118,7 @@ Output is recorded in `acceptance-report.txt`.
 
 ## Running Internal Automated Tests
 
-Run the full suite of 58 unit and integration tests covering authentication, RBAC, deadline enforcement boundaries, project lifecycle, judge isolation, adversarial parameter tampering, normalization mathematics, community voting, anti-abuse, and cryptographic verification:
+Run the full suite of 81 unit and integration tests covering authentication, RBAC, deadline enforcement boundaries, project lifecycle, judge isolation, adversarial parameter tampering, normalization mathematics, community voting, anti-abuse, and cryptographic verification:
 
 ```bash
 pnpm test
