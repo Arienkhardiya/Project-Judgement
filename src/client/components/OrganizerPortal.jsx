@@ -12,6 +12,12 @@ export default function OrganizerPortal({ user }) {
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(null);
 
+  // Voting Windows State
+  const [votingWindows, setVotingWindows] = useState([]);
+  const [votingWindowsLoading, setVotingWindowsLoading] = useState(false);
+  const [votingWindowForm, setVotingWindowForm] = useState({ title: '', start_time: '', end_time: '', is_active: true });
+  const [votingWindowSubmitting, setVotingWindowSubmitting] = useState(false);
+
   // Forms
   const [eventForm, setEventForm] = useState({ name: '', description: '', start_time: '', end_time: '', submissions_close: '' });
   const [trackForm, setTrackForm] = useState({ name: '', description: '' });
@@ -92,6 +98,21 @@ export default function OrganizerPortal({ user }) {
     }
   };
 
+  const loadVotingWindows = async () => {
+    setVotingWindowsLoading(true);
+    try {
+      const res = await fetch(`/api/voting/windows?event_id=${selectedEventId || 'evt_01'}`);
+      if (res.ok) {
+        const data = await res.json();
+        setVotingWindows(data.windows || []);
+      }
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setVotingWindowsLoading(false);
+    }
+  };
+
   const handleSubTabChange = (tab) => {
     setSubTab(tab);
     setError(null);
@@ -100,6 +121,38 @@ export default function OrganizerPortal({ user }) {
     else if (tab === 'normalized') loadNormalized();
     else if (tab === 'audit') loadAudit();
     else if (tab === 'events') loadEvents();
+    else if (tab === 'voting') loadVotingWindows();
+  };
+
+  const handleCreateVotingWindow = async (e) => {
+    e.preventDefault();
+    if (votingWindowSubmitting) return;
+    setError(null);
+    setSuccess(null);
+    setVotingWindowSubmitting(true);
+    try {
+      const payload = {
+        event_id: selectedEventId || 'evt_01',
+        title: votingWindowForm.title,
+        start_time: new Date(votingWindowForm.start_time).toISOString(),
+        end_time: new Date(votingWindowForm.end_time).toISOString(),
+        is_active: votingWindowForm.is_active ? 1 : 0
+      };
+      const res = await fetch('/api/voting/windows', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to create voting window');
+      setSuccess('Voting window created successfully');
+      setVotingWindowForm({ title: '', start_time: '', end_time: '', is_active: true });
+      loadVotingWindows();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setVotingWindowSubmitting(false);
+    }
   };
 
   const handleCreateEvent = async (e) => {
@@ -174,6 +227,9 @@ export default function OrganizerPortal({ user }) {
         </button>
         <button className={`nav-link ${subTab === 'events' ? 'active' : ''}`} onClick={() => handleSubTabChange('events')}>
           Event & Track Config
+        </button>
+        <button className={`nav-link ${subTab === 'voting' ? 'active' : ''}`} onClick={() => handleSubTabChange('voting')}>
+          Community Voting
         </button>
       </div>
 
@@ -412,6 +468,101 @@ export default function OrganizerPortal({ user }) {
                 />
               </div>
               <button type="submit" className="btn">Create Event</button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* TAB 5: COMMUNITY VOTING */}
+      {subTab === 'voting' && (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(350px, 1fr))', gap: '1.5rem' }}>
+          <div className="card-panel">
+            <h2>Voting Windows</h2>
+            {votingWindowsLoading ? (
+              <div className="empty-state">Loading voting windows...</div>
+            ) : votingWindows.length === 0 ? (
+              <div className="empty-state">No voting windows configured for this event.</div>
+            ) : (
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.9rem' }}>
+                <thead>
+                  <tr style={{ borderBottom: '1px solid var(--surface-border)', color: 'var(--text-muted)', textAlign: 'left' }}>
+                    <th style={{ padding: '0.5rem 0' }}>Title</th>
+                    <th>Status</th>
+                    <th>Start</th>
+                    <th>End</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {votingWindows.map(w => (
+                    <tr key={w.id} style={{ borderBottom: '1px solid var(--surface-border)' }}>
+                      <td style={{ padding: '0.5rem 0', fontWeight: 600 }}>{w.title}</td>
+                      <td>
+                        <span className="status-badge" style={{ 
+                          background: w.current_status === 'OPEN' ? '#064e3b' : w.current_status === 'UPCOMING' ? '#1e3a8a' : '#1e293b',
+                          color: w.current_status === 'OPEN' ? '#10b981' : w.current_status === 'UPCOMING' ? '#93c5fd' : '#94a3b8',
+                          padding: '0.2rem 0.5rem',
+                          borderRadius: '4px',
+                          fontSize: '0.75rem',
+                          fontWeight: 'bold'
+                        }}>
+                          {w.current_status}
+                        </span>
+                      </td>
+                      <td style={{ color: 'var(--text-muted)' }}>{new Date(w.start_time).toLocaleString()}</td>
+                      <td style={{ color: 'var(--text-muted)' }}>{new Date(w.end_time).toLocaleString()}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+
+          <div className="card-panel">
+            <h2>Create Voting Window</h2>
+            <form onSubmit={handleCreateVotingWindow}>
+              <div className="form-group">
+                <label>Window Title</label>
+                <input 
+                  type="text" 
+                  className="form-control" 
+                  value={votingWindowForm.title} 
+                  onChange={e => setVotingWindowForm({ ...votingWindowForm, title: e.target.value })} 
+                  required 
+                  placeholder="e.g. Community Choice Award Voting"
+                />
+              </div>
+              <div className="form-group">
+                <label>Start Time (Local)</label>
+                <input 
+                  type="datetime-local" 
+                  className="form-control" 
+                  value={votingWindowForm.start_time ? votingWindowForm.start_time.slice(0, 16) : ''}
+                  onChange={e => setVotingWindowForm({ ...votingWindowForm, start_time: e.target.value })}
+                  required 
+                />
+              </div>
+              <div className="form-group">
+                <label>End Time (Local)</label>
+                <input 
+                  type="datetime-local" 
+                  className="form-control" 
+                  value={votingWindowForm.end_time ? votingWindowForm.end_time.slice(0, 16) : ''}
+                  onChange={e => setVotingWindowForm({ ...votingWindowForm, end_time: e.target.value })}
+                  required 
+                />
+              </div>
+              <div className="form-group" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1rem' }}>
+                <input 
+                  type="checkbox" 
+                  id="voting-active-checkbox"
+                  checked={votingWindowForm.is_active}
+                  onChange={e => setVotingWindowForm({ ...votingWindowForm, is_active: e.target.checked })}
+                />
+                <label htmlFor="voting-active-checkbox" style={{ margin: 0 }}>Active (Visible to users)</label>
+              </div>
+              <button type="submit" className="btn" disabled={votingWindowSubmitting}>
+                {votingWindowSubmitting ? 'Creating...' : 'Create Voting Window'}
+              </button>
             </form>
           </div>
         </div>
