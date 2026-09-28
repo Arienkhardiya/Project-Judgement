@@ -163,3 +163,7 @@ The system enforces strict server-side authorization:
 4. **Embeddable Gallery Widget:**
    - External partner sites or hackathon landing pages can embed the live project gallery using a lightweight iframe endpoint (`/embed/gallery`) with responsive styles and zero dependencies.
 
+5. **Bulk Data Portability & Archival (T4):**
+   - **Signed Bulk Export (`GET /api/export.json`, `GET /api/organizer/export.json`):** Allows organizers to export the complete state of the event (event metadata, tracks, prizes, teams, projects, rubrics, criteria, assignments, scores, and normalized rankings). The entire export bundle is digitally signed with the server's Ed25519 authority key.
+   - **Transactional Bulk Import (`POST /api/organizer/import.json`):** Allows organizers to import complete datasets (supporting both the official `fixtures.json` format and full export bundles). The import runs within an atomic SQLite transaction (`BEGIN TRANSACTION` / `COMMIT`), ensuring foreign key integrity and user email conflict resolution.
+
