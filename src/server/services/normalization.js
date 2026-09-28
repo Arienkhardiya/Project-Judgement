@@ -240,8 +240,13 @@ export function calculateNormalization(eventId, customDb = null) {
     });
   }
 
-  // Sort descending by final_score, then raw_avg_score
-  projectResults.sort((a, b) => b.final_score - a.final_score || b.raw_avg_score - a.raw_avg_score);
+  // Sort descending by final_score, then raw_avg_score, with deterministic project_id tie-breaker
+  projectResults.sort(
+    (a, b) =>
+      b.final_score - a.final_score ||
+      b.raw_avg_score - a.raw_avg_score ||
+      a.project_id.localeCompare(b.project_id)
+  );
 
   // Assign overall ranks
   projectResults.forEach((p, idx) => {

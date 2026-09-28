@@ -87,4 +87,16 @@ describe('Normalization Engine Tests', () => {
     assert.equal(j23.count, 1);
     assert.ok(j23.regularizedStdDev > 0);
   });
+
+  it('guarantees strictly deterministic rankings across multiple executions', () => {
+    const run1 = calculateNormalization(null, db);
+    const run2 = calculateNormalization(null, db);
+
+    assert.equal(run1.projects.length, run2.projects.length);
+    for (let i = 0; i < run1.projects.length; i++) {
+      assert.equal(run1.projects[i].project_id, run2.projects[i].project_id);
+      assert.equal(run1.projects[i].rank, run2.projects[i].rank);
+      assert.equal(run1.projects[i].final_score, run2.projects[i].final_score);
+    }
+  });
 });
