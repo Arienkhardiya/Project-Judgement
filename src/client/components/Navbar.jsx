@@ -37,6 +37,13 @@ export default function Navbar({ user, activeTab, setActiveTab, onOpenLogin, onL
             Participant Portal
           </button>
 
+          <button 
+            className={`nav-link ${activeTab === 'voting' ? 'active' : ''}`}
+            onClick={() => setActiveTab('voting')}
+          >
+            Community Voting
+          </button>
+
           {(user?.roles?.includes('judge') || user?.roles?.includes('admin')) && (
             <button 
               className={`nav-link ${activeTab === 'judge' ? 'active' : ''}`}

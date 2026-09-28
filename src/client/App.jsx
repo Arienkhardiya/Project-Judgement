@@ -4,6 +4,7 @@ import Gallery from './components/Gallery.jsx';
 import ParticipantPortal from './components/ParticipantPortal.jsx';
 import JudgePortal from './components/JudgePortal.jsx';
 import OrganizerPortal from './components/OrganizerPortal.jsx';
+import CommunityVoting from './components/CommunityVoting.jsx';
 import LoginModal from './components/LoginModal.jsx';
 
 export default function App() {
@@ -80,6 +81,12 @@ export default function App() {
           />
         )}
         {activeTab === 'organizer' && <OrganizerPortal user={user} />}
+        {activeTab === 'voting' && (
+          <CommunityVoting 
+            user={user} 
+            onRequireLogin={() => setIsLoginOpen(true)}
+          />
+        )}
       </main>
 
       <LoginModal 
@@ -87,9 +94,11 @@ export default function App() {
         onClose={() => setIsLoginOpen(false)} 
         onLoginSuccess={(loggedUser) => {
           setUser(loggedUser);
-          if (loggedUser.roles.includes('organizer')) setActiveTab('organizer');
-          else if (loggedUser.roles.includes('judge')) setActiveTab('judge');
-          else if (loggedUser.roles.includes('participant')) setActiveTab('participant');
+          if (activeTab !== 'voting') {
+            if (loggedUser.roles.includes('organizer')) setActiveTab('organizer');
+            else if (loggedUser.roles.includes('judge')) setActiveTab('judge');
+            else if (loggedUser.roles.includes('participant')) setActiveTab('participant');
+          }
         }}
       />
     </div>
