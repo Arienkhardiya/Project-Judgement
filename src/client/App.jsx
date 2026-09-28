@@ -56,8 +56,8 @@ export default function App() {
   };
 
   return (
-    <div>
-      <Navbar 
+    <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh' }}>
+      <Navbar
         user={user}
         activeTab={activeTab}
         setActiveTab={setActiveTab}
@@ -66,7 +66,7 @@ export default function App() {
         onSwitchSeeded={handleSwitchSeeded}
       />
 
-      <main>
+      <main style={{ flex: 1 }}>
         {activeTab === 'gallery' && (
           <Gallery
             user={user}
@@ -74,29 +74,33 @@ export default function App() {
           />
         )}
         {activeTab === 'participant' && (
-          <ParticipantPortal 
-            user={user} 
+          <ParticipantPortal
+            user={user}
             onRequireLogin={() => setIsLoginOpen(true)}
           />
         )}
         {activeTab === 'judge' && (
-          <JudgePortal 
-            user={user} 
+          <JudgePortal
+            user={user}
             onRequireLogin={() => setIsLoginOpen(true)}
           />
         )}
         {activeTab === 'organizer' && <OrganizerPortal user={user} />}
         {activeTab === 'voting' && (
-          <CommunityVoting 
-            user={user} 
+          <CommunityVoting
+            user={user}
             onRequireLogin={() => setIsLoginOpen(true)}
           />
         )}
       </main>
 
-      <LoginModal 
-        isOpen={isLoginOpen} 
-        onClose={() => setIsLoginOpen(false)} 
+      <footer style={{ borderTop: '1px solid var(--surface-border)', padding: '1.5rem', textAlign: 'center', fontSize: '0.8rem', color: 'var(--text-dim)', background: 'var(--surface)' }}>
+        DOGFOOD 2026 Platform &bull; Self-Hostable Hackathon Engine &bull; T1 – T4 Verified
+      </footer>
+
+      <LoginModal
+        isOpen={isLoginOpen}
+        onClose={() => setIsLoginOpen(false)}
         onLoginSuccess={(loggedUser) => {
           setUser(loggedUser);
           if (activeTab !== 'voting') {
