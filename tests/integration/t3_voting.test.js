@@ -1,8 +1,10 @@
-import { test, describe, before, after } from 'node:test';
+import { test, describe, before, after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { createApp } from '../../src/server/app.js';
 import { getDatabase, closeDatabase } from '../../src/server/db/database.js';
 import { seedDatabase } from '../../src/server/db/seed.js';
+import { _resetVotingRateLimits } from '../../src/server/routes/voting.js';
+import { _resetCommentRateLimits } from '../../src/server/routes/comments.js';
 
 describe('Milestone 3 - T3 Community Voting & Anti-Abuse Integration Tests', () => {
   let app;
@@ -11,6 +13,9 @@ describe('Milestone 3 - T3 Community Voting & Anti-Abuse Integration Tests', () 
   let creds;
 
   before(async () => {
+    process.env.NODE_ENV = 'test';
+    _resetVotingRateLimits();
+    _resetCommentRateLimits();
     const db = getDatabase();
     creds = seedDatabase(db);
     app = createApp();
@@ -24,7 +29,14 @@ describe('Milestone 3 - T3 Community Voting & Anti-Abuse Integration Tests', () 
     });
   });
 
+  beforeEach(() => {
+    _resetVotingRateLimits();
+    _resetCommentRateLimits();
+  });
+
   after(async () => {
+    _resetVotingRateLimits();
+    _resetCommentRateLimits();
     if (server) {
       await new Promise((resolve) => server.close(resolve));
     }
