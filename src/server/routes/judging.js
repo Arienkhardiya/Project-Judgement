@@ -24,8 +24,17 @@ router.get('/scores', requireJudge, (req, res) => {
   const db = getDatabase();
   const currentJudgeId = req.user.id;
 
-  // Check query parameter tampering (?judge=... or ?judge_id=...)
-  const targetJudgeQuery = req.query.judge || req.query.judge_id;
+  // Check query parameter tampering (?judge=..., ?judge_id=..., ?user_id=..., etc.)
+  const targetJudgeQuery =
+    req.query.judge ||
+    req.query.judge_id ||
+    req.query.judge_user_id ||
+    req.query.user_id ||
+    req.query.judgeId ||
+    req.query.userId ||
+    req.query.target ||
+    req.query.target_judge;
+
   if (targetJudgeQuery) {
     const resolvedTarget = resolveJudgeId(targetJudgeQuery);
     if (resolvedTarget !== currentJudgeId && !req.user.roles.includes('organizer') && !req.user.roles.includes('admin')) {
@@ -74,6 +83,60 @@ router.get('/scores', requireJudge, (req, res) => {
     judge_name: req.user.name,
     scores,
   });
+});
+
+// GET /api/judge/scores/:scoreId - Retrieve single score with strict ownership check
+router.get('/scores/:scoreId', requireJudge, (req, res) => {
+  const db = getDatabase();
+  const currentJudgeId = req.user.id;
+  const { scoreId } = req.params;
+
+  const score = db.prepare(`
+    SELECT 
+      s.id as score_id,
+      s.judge_user_id,
+      s.project_id,
+      s.comment,
+      s.status,
+      s.submitted_at,
+      p.title as project_title,
+      p.track_id,
+      tr.name as track_name,
+      t.name as team_name
+    FROM scores s
+    JOIN projects p ON p.id = s.project_id
+    JOIN teams t ON t.id = p.team_id
+    LEFT JOIN tracks tr ON tr.id = p.track_id
+    WHERE s.id = ?
+  `).get(scoreId);
+
+  if (!score) {
+    return res.status(404).json({ error: 'Score not found' });
+  }
+
+  // Strict ownership check: only authoring judge or organizer/admin can view
+  if (
+    score.judge_user_id !== currentJudgeId &&
+    !req.user.roles.includes('organizer') &&
+    !req.user.roles.includes('admin')
+  ) {
+    return res.status(403).json({
+      error: 'Forbidden: Access to peer judge score is strictly prohibited',
+    });
+  }
+
+  const values = db.prepare(`
+    SELECT criterion_key, value
+    FROM score_values
+    WHERE score_id = ?
+  `).all(score.score_id);
+
+  score.criteria = {};
+  for (const v of values) {
+    score.criteria[v.criterion_key] = v.value;
+  }
+
+  res.json({ score });
 });
 
 // GET /api/judge/assignments - List projects assigned to current judge

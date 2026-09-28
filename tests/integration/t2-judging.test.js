@@ -264,4 +264,49 @@ describe('Milestone 2 - T2 Judging & Security Integration Tests', () => {
       }
     }
   });
+
+  it('17. Parameter probe hardening: Alternate parameter names (?user_id, ?judge_user_id) are strictly blocked with 403', async () => {
+    const res1 = await fetch(`${baseUrl}/api/judge/scores?user_id=jdg_01`, {
+      headers: { 'Cookie': 'session=jdg_b_44de' },
+    });
+    assert.equal(res1.status, 403);
+
+    const res2 = await fetch(`${baseUrl}/api/judge/scores?judge_user_id=jdg_01`, {
+      headers: { 'Cookie': 'session=jdg_b_44de' },
+    });
+    assert.equal(res2.status, 403);
+  });
+
+  it('18. Score detail ownership: Judge A can view own score, but Judge B is FORBIDDEN with 403', async () => {
+    // 1. Fetch Judge A's scores to get a valid score ID
+    const listRes = await fetch(`${baseUrl}/api/judge/scores`, {
+      headers: { 'Cookie': 'session=jdg_a_91bc' },
+    });
+    assert.equal(listRes.status, 200);
+    const listData = await listRes.json();
+    assert.ok(listData.scores.length > 0);
+    const scoreId = listData.scores[0].score_id;
+
+    // 2. Judge A views own score -> 200
+    const ownRes = await fetch(`${baseUrl}/api/judge/scores/${scoreId}`, {
+      headers: { 'Cookie': 'session=jdg_a_91bc' },
+    });
+    assert.equal(ownRes.status, 200);
+    const ownData = await ownRes.json();
+    assert.equal(ownData.score.score_id, scoreId);
+
+    // 3. Judge B attempts to view Judge A's score -> 403 Forbidden
+    const peerRes = await fetch(`${baseUrl}/api/judge/scores/${scoreId}`, {
+      headers: { 'Cookie': 'session=jdg_b_44de' },
+    });
+    assert.equal(peerRes.status, 403);
+    const peerData = await peerRes.json();
+    assert.ok(peerData.error.includes('Forbidden'));
+
+    // 4. Participant attempts to view score -> 403 Forbidden
+    const partRes = await fetch(`${baseUrl}/api/judge/scores/${scoreId}`, {
+      headers: { 'Cookie': 'session=prt_2e88' },
+    });
+    assert.equal(partRes.status, 403);
+  });
 });
