@@ -67,7 +67,12 @@ export default function App() {
       />
 
       <main>
-        {activeTab === 'gallery' && <Gallery />}
+        {activeTab === 'gallery' && (
+          <Gallery
+            user={user}
+            onRequireLogin={() => setIsLoginOpen(true)}
+          />
+        )}
         {activeTab === 'participant' && (
           <ParticipantPortal 
             user={user} 
