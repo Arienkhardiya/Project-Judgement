@@ -19,7 +19,7 @@ export default function Navbar({ user, activeTab, setActiveTab, onOpenLogin, onL
           <a href="#" onClick={(e) => { e.preventDefault(); setActiveTab('gallery'); }} className="logo">
             DOGFOOD 2026
           </a>
-          <span className="tag-version">T1 + T2 Active</span>
+          <span className="tag-version">T1 – T4 Active</span>
         </div>
 
         <nav className="nav-links">
