@@ -2,7 +2,7 @@
 base_url = "http://localhost:8080"
 
 [tiers]
-claimed = ["T1", "T2"]
+claimed = ["T1", "T2", "T3"]
 pitch = "High-integrity hackathon submission and judging platform with deterministic Bayesian-regularized normalization."
 
 [auth]
