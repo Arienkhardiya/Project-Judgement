@@ -16,7 +16,10 @@ function hashPassword(password) {
 // GET /api/organizer/dashboard - Comprehensive Judging Progress View
 router.get('/dashboard', requireOrganizer, (req, res) => {
   const db = getDatabase();
-  const event = db.prepare('SELECT id, name FROM events ORDER BY created_at DESC LIMIT 1').get();
+  const eventId = req.query.event_id;
+  const event = eventId
+    ? db.prepare('SELECT id, name FROM events WHERE id = ?').get(eventId)
+    : db.prepare('SELECT id, name FROM events ORDER BY created_at DESC LIMIT 1').get();
   if (!event) return res.status(404).json({ error: 'No event found' });
 
   // 1. Overall Assignment Stats
@@ -97,7 +100,10 @@ router.get('/dashboard', requireOrganizer, (req, res) => {
 // GET /api/organizer/normalized - Normalization results with mathematical breakdown
 router.get('/normalized', requireOrganizer, (req, res) => {
   const db = getDatabase();
-  const event = db.prepare('SELECT id FROM events ORDER BY created_at DESC LIMIT 1').get();
+  const eventId = req.query.event_id;
+  const event = eventId
+    ? db.prepare('SELECT id FROM events WHERE id = ?').get(eventId)
+    : db.prepare('SELECT id FROM events ORDER BY created_at DESC LIMIT 1').get();
   if (!event) return res.status(404).json({ error: 'Event not found' });
 
   const result = calculateNormalization(event.id, db);
@@ -114,7 +120,10 @@ router.get('/normalized', requireOrganizer, (req, res) => {
 // GET /api/export.csv - RFC 4180 CSV export (Organizer-only)
 router.get('/export.csv', requireOrganizer, (req, res) => {
   const db = getDatabase();
-  const event = db.prepare('SELECT id, name FROM events ORDER BY created_at DESC LIMIT 1').get();
+  const eventId = req.query.event_id;
+  const event = eventId
+    ? db.prepare('SELECT id, name FROM events WHERE id = ?').get(eventId)
+    : db.prepare('SELECT id, name FROM events ORDER BY created_at DESC LIMIT 1').get();
   if (!event) return res.status(404).json({ error: 'Event not found' });
 
   const result = calculateNormalization(event.id, db);

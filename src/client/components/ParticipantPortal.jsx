@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 
 export default function ParticipantPortal({ user, onRequireLogin }) {
   const [teamData, setTeamData] = useState(null);
@@ -39,6 +39,34 @@ export default function ParticipantPortal({ user, onRequireLogin }) {
       const teamJson = await teamRes.json();
       setTeamData(teamJson.team);
 
+      const existingProject = teamJson.team?.projects?.[0];
+      if (existingProject) {
+        // Fetch full project details to get full description, repo_url, demo_url
+        try {
+          const pRes = await fetch(`/api/projects/${existingProject.id}`);
+          if (pRes.ok) {
+            const pData = await pRes.json();
+            const p = pData.project;
+            setProjectForm({
+              title: p.title || '',
+              summary: p.summary || '',
+              description: p.description || '',
+              repo_url: p.repo_url || '',
+              demo_url: p.demo_url || '',
+              track_id: p.track_id || '',
+              action: p.status === 'SUBMITTED' ? 'submit' : 'draft',
+            });
+          }
+        } catch {
+          setProjectForm(prev => ({
+            ...prev,
+            title: existingProject.title || '',
+            summary: existingProject.summary || '',
+            track_id: existingProject.track_id || prev.track_id,
+          }));
+        }
+      }
+
       // 2. Fetch event & tracks
       const evtRes = await fetch('/api/events');
       const evtJson = await evtRes.json();
@@ -49,7 +77,7 @@ export default function ParticipantPortal({ user, onRequireLogin }) {
         const tracksRes = await fetch(`/api/events/${primaryEvt.id}`);
         const tracksJson = await tracksRes.json();
         setTracks(tracksJson.tracks || []);
-        if (tracksJson.tracks && tracksJson.tracks.length > 0) {
+        if (tracksJson.tracks && tracksJson.tracks.length > 0 && !existingProject?.track_id) {
           setProjectForm(prev => ({ ...prev, track_id: tracksJson.tracks[0].id }));
         }
       }
@@ -103,25 +131,56 @@ export default function ParticipantPortal({ user, onRequireLogin }) {
     setError(null);
     setSuccess(null);
     try {
-      const payload = {
-        ...projectForm,
-        team_id: teamData?.id,
-        action: actionType,
-      };
+      const existingProject = teamData?.projects?.[0];
 
-      const res = await fetch('/projects/new', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
+      if (existingProject) {
+        // Update existing project via PUT
+        const updateRes = await fetch(`/api/projects/${existingProject.id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            title: projectForm.title,
+            summary: projectForm.summary,
+            description: projectForm.description,
+            repo_url: projectForm.repo_url,
+            demo_url: projectForm.demo_url,
+            track_id: projectForm.track_id,
+          }),
+        });
+        const updateData = await updateRes.json();
+        if (!updateRes.ok) throw new Error(updateData.error || 'Update failed');
 
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || 'Submission failed');
+        // If transitioning draft to submitted
+        if (actionType === 'submit' && existingProject.status === 'DRAFT') {
+          const subRes = await fetch(`/api/projects/${existingProject.id}/submit`, { method: 'POST' });
+          const subData = await subRes.json();
+          if (!subRes.ok) throw new Error(subData.error || 'Submission failed');
+        }
+
+        setSuccess(actionType === 'submit' ? 'Project successfully submitted!' : 'Draft updated successfully!');
+        loadData();
+      } else {
+        // Create new project
+        const payload = {
+          ...projectForm,
+          team_id: teamData?.id,
+          action: actionType,
+        };
+
+        const res = await fetch('/projects/new', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+
+        const data = await res.json();
+        if (!res.ok) {
+          throw new Error(data.error || 'Submission failed');
+        }
+
+        setSuccess(data.message || 'Project saved!');
+        loadData();
       }
-
-      setSuccess(data.message || 'Project saved!');
-      loadData();
     } catch (err) {
       setError(err.message);
     }
@@ -528,7 +587,7 @@ export default function ParticipantPortal({ user, onRequireLogin }) {
 
                 <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
                   <button type="submit" className="btn" disabled={isClosed}>
-                    {isClosed ? 'Submissions Closed' : 'Submit Project'}
+                    {isClosed ? 'Submissions Closed' : activeSubmission?.status === 'SUBMITTED' ? 'Update Submission' : 'Submit Project'}
                   </button>
                   <button
                     type="button"
@@ -536,7 +595,7 @@ export default function ParticipantPortal({ user, onRequireLogin }) {
                     onClick={() => handleProjectSubmit('draft')}
                     disabled={isClosed}
                   >
-                    Save Draft
+                    {activeSubmission ? 'Update Draft' : 'Save Draft'}
                   </button>
                 </div>
               </form>

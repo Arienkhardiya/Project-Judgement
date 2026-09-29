@@ -34,15 +34,41 @@ export default function OrganizerPortal({ user }) {
   const [eventForm, setEventForm] = useState({ name: '', description: '', start_time: '', end_time: '', submissions_close: '' });
   const [inviteJudgeForm, setInviteJudgeForm] = useState({ name: '', email: '', track_ids: [] });
 
+  // Auto Assignment State
+  const [showAutoAssignModal, setShowAutoAssignModal] = useState(false);
+  const [autoAssigning, setAutoAssigning] = useState(false);
+  const [reviewsPerProject, setReviewsPerProject] = useState(3);
+
+  // Bulk Import State
+  const [importingJson, setImportingJson] = useState(false);
+  const fileInputRef = React.useRef(null);
+
+  // Track & Prize Form State
+  const [trackForm, setTrackForm] = useState({ name: '', description: '' });
+  const [prizeForm, setPrizeForm] = useState({ name: '', description: '', amount: 1000, track_id: '' });
+  const [addingTrack, setAddingTrack] = useState(false);
+  const [addingPrize, setAddingPrize] = useState(false);
+
   useEffect(() => {
-    loadDashboard();
     loadEvents();
   }, []);
 
-  const loadDashboard = async () => {
+  const handleEventChange = (eventId) => {
+    setSelectedEventId(eventId);
+    loadEventDetails(eventId);
+    if (subTab === 'dashboard') loadDashboard(eventId);
+    else if (subTab === 'normalized') loadNormalized(eventId);
+    else if (subTab === 'voting') {
+      loadVotingWindows(eventId);
+      loadVotingResults(eventId);
+    }
+  };
+
+  const loadDashboard = async (eventId = selectedEventId) => {
     setLoading(true);
     try {
-      const res = await fetch('/api/organizer/dashboard');
+      const q = eventId ? `?event_id=${encodeURIComponent(eventId)}` : '';
+      const res = await fetch(`/api/organizer/dashboard${q}`);
       if (res.ok) {
         const data = await res.json();
         setDashboardData(data);
@@ -54,10 +80,11 @@ export default function OrganizerPortal({ user }) {
     }
   };
 
-  const loadNormalized = async () => {
+  const loadNormalized = async (eventId = selectedEventId) => {
     setLoading(true);
     try {
-      const res = await fetch('/api/organizer/normalized');
+      const q = eventId ? `?event_id=${encodeURIComponent(eventId)}` : '';
+      const res = await fetch(`/api/organizer/normalized${q}`);
       if (res.ok) {
         const data = await res.json();
         setNormalizedData(data);
@@ -89,9 +116,13 @@ export default function OrganizerPortal({ user }) {
       const res = await fetch('/api/events');
       const data = await res.json();
       setEvents(data.events || []);
-      if (data.events && data.events.length > 0 && !selectedEventId) {
-        setSelectedEventId(data.events[0].id);
-        loadEventDetails(data.events[0].id);
+      if (data.events && data.events.length > 0) {
+        const initialId = selectedEventId || data.events[0].id;
+        if (!selectedEventId) {
+          setSelectedEventId(initialId);
+        }
+        loadEventDetails(initialId);
+        loadDashboard(initialId);
       }
     } catch (err) {
       console.error(err);
@@ -108,10 +139,10 @@ export default function OrganizerPortal({ user }) {
     }
   };
 
-  const loadVotingWindows = async () => {
+  const loadVotingWindows = async (eventId = selectedEventId) => {
     setVotingWindowsLoading(true);
     try {
-      const res = await fetch(`/api/voting/windows?event_id=${selectedEventId || 'evt_01'}`);
+      const res = await fetch(`/api/voting/windows?event_id=${encodeURIComponent(eventId || 'evt_01')}`);
       if (res.ok) {
         const data = await res.json();
         setVotingWindows(data.windows || []);
@@ -123,11 +154,11 @@ export default function OrganizerPortal({ user }) {
     }
   };
 
-  const loadVotingResults = async () => {
+  const loadVotingResults = async (eventId = selectedEventId) => {
     setVotingResultsLoading(true);
     setVotingResultsError(null);
     try {
-      const res = await fetch(`/api/voting/results?event_id=${encodeURIComponent(selectedEventId || 'evt_01')}`);
+      const res = await fetch(`/api/voting/results?event_id=${encodeURIComponent(eventId || 'evt_01')}`);
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to load voting results');
       setVotingResults(data);
@@ -135,6 +166,104 @@ export default function OrganizerPortal({ user }) {
       setVotingResultsError(err.message || 'Failed to load voting results');
     } finally {
       setVotingResultsLoading(false);
+    }
+  };
+
+  const handleAutoAssign = async () => {
+    setAutoAssigning(true);
+    setError(null);
+    setSuccess(null);
+    try {
+      const res = await fetch('/api/organizer/assignments/auto', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reviews_per_project: Number(reviewsPerProject) }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Auto assignment failed');
+      setSuccess(data.message || 'Automated review assignment complete.');
+      setShowAutoAssignModal(false);
+      loadDashboard(selectedEventId);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setAutoAssigning(false);
+    }
+  };
+
+  const handleImportJsonFile = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setImportingJson(true);
+    setError(null);
+    setSuccess(null);
+    try {
+      const text = await file.text();
+      const payload = JSON.parse(text);
+      const res = await fetch('/api/organizer/import.json', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Import failed');
+      setSuccess(`Import successful! ${data.message || ''}`);
+      loadDashboard(selectedEventId);
+      loadEvents();
+    } catch (err) {
+      setError(`Import failed: ${err.message}`);
+    } finally {
+      setImportingJson(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
+
+  const handleAddTrack = async (e) => {
+    e.preventDefault();
+    if (!selectedEventId) return;
+    setAddingTrack(true);
+    setError(null);
+    setSuccess(null);
+    try {
+      const res = await fetch(`/api/events/${encodeURIComponent(selectedEventId)}/tracks`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(trackForm),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to add track');
+      setSuccess(`Track "${data.track.name}" added successfully!`);
+      setTrackForm({ name: '', description: '' });
+      loadEventDetails(selectedEventId);
+      loadDashboard(selectedEventId);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setAddingTrack(false);
+    }
+  };
+
+  const handleAddPrize = async (e) => {
+    e.preventDefault();
+    if (!selectedEventId) return;
+    setAddingPrize(true);
+    setError(null);
+    setSuccess(null);
+    try {
+      const res = await fetch(`/api/events/${encodeURIComponent(selectedEventId)}/prizes`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(prizeForm),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to add prize');
+      setSuccess(`Prize "${data.prize.name}" added successfully!`);
+      setPrizeForm({ name: '', description: '', amount: 1000, track_id: '' });
+      loadEventDetails(selectedEventId);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setAddingPrize(false);
     }
   };
 
@@ -294,18 +423,67 @@ export default function OrganizerPortal({ user }) {
             <p className="dashboard-desc">
               Real-time judging telemetry, Empirical Bayes cross-judge normalization, immutable audit logs, and community voting oversight.
             </p>
+
+            {events.length > 0 && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem', marginTop: '0.75rem', flexWrap: 'wrap' }}>
+                <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', fontWeight: 600 }}>Active Event:</span>
+                <select
+                  className="form-control"
+                  style={{ width: 'auto', padding: '0.35rem 0.75rem', fontSize: '0.85rem', fontWeight: 600 }}
+                  value={selectedEventId}
+                  onChange={e => handleEventChange(e.target.value)}
+                >
+                  {events.map(ev => (
+                    <option key={ev.id} value={ev.id}>
+                      {ev.name} ({ev.id})
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
           </div>
 
-          <div className="dashboard-actions">
+          <div className="dashboard-actions" style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
             <a
-              href="/api/export.csv"
+              href={`/api/export.csv${selectedEventId ? '?event_id=' + encodeURIComponent(selectedEventId) : ''}`}
               download="dogfood-results.csv"
-              className="btn"
+              className="btn btn-secondary btn-sm"
               style={{ display: 'inline-flex', alignItems: 'center', gap: '0.45rem' }}
+              title="Download RFC 4180 results CSV"
             >
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-              Export Results CSV
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+              Export CSV
             </a>
+
+            <a
+              href={`/api/organizer/export.json${selectedEventId ? '?event_id=' + encodeURIComponent(selectedEventId) : ''}`}
+              download={`dogfood-export-${selectedEventId || 'all'}.json`}
+              className="btn btn-secondary btn-sm"
+              style={{ display: 'inline-flex', alignItems: 'center', gap: '0.45rem' }}
+              title="Download Ed25519-signed full event JSON bundle (T4)"
+            >
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><polyline points="9 12 11 14 15 10"/></svg>
+              Export Signed JSON
+            </a>
+
+            <input
+              type="file"
+              ref={fileInputRef}
+              onChange={handleImportJsonFile}
+              accept=".json"
+              style={{ display: 'none' }}
+            />
+            <button
+              type="button"
+              className="btn btn-secondary btn-sm"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={importingJson}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: '0.45rem' }}
+              title="Import complete event dataset from signed JSON bundle (T4)"
+            >
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+              {importingJson ? 'Importing...' : 'Import JSON Bundle'}
+            </button>
           </div>
         </div>
       </div>
@@ -442,8 +620,8 @@ export default function OrganizerPortal({ user }) {
             </div>
           </div>
 
-          {/* 2-Column Grid: Progress by Track & Invite Judge */}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))', gap: '1.5rem', marginBottom: '1.75rem' }}>
+          {/* 3-Column Grid: Progress by Track, Invite Judge, Auto-Assignment */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '1.5rem', marginBottom: '1.75rem' }}>
             {/* Progress by Track */}
             <div className="card-panel" style={{ margin: 0 }}>
               <h2>
@@ -522,6 +700,38 @@ export default function OrganizerPortal({ user }) {
                   Send Judge Invitation
                 </button>
               </form>
+            </div>
+
+            {/* Automated Review Assignment Card */}
+            <div className="card-panel" style={{ margin: 0 }}>
+              <h2>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                Batch Review Assignment
+              </h2>
+              <p style={{ color: 'var(--text-muted)', fontSize: '0.88rem', marginBottom: '1.25rem', lineHeight: 1.55 }}>
+                Deterministically distribute submitted projects to track-assigned judges with uniform workload balancing.
+              </p>
+              <div className="form-group">
+                <label>Reviews Per Project *</label>
+                <input
+                  type="number"
+                  min="1"
+                  max="10"
+                  className="form-control"
+                  value={reviewsPerProject}
+                  onChange={e => setReviewsPerProject(Math.max(1, parseInt(e.target.value) || 1))}
+                  required
+                />
+              </div>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                style={{ width: '100%' }}
+                onClick={handleAutoAssign}
+                disabled={autoAssigning}
+              >
+                {autoAssigning ? 'Generating Assignments...' : 'Generate Batch Assignments'}
+              </button>
             </div>
           </div>
 
@@ -761,67 +971,222 @@ export default function OrganizerPortal({ user }) {
           SUBTAB 4: EVENT & TRACK CONFIG
           =================================================================== */}
       {subTab === 'events' && (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))', gap: '1.5rem' }}>
-          {/* Create Event Card */}
-          <div className="card-panel">
-            <h2>
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
-              Create New Event
-            </h2>
-            <p style={{ color: 'var(--text-muted)', fontSize: '0.88rem', marginBottom: '1.25rem', lineHeight: 1.55 }}>
-              Establish a new hackathon instance with strict UTC submission deadlines and lifecycle phases.
-            </p>
-            <form onSubmit={handleCreateEvent}>
-              <div className="form-group">
-                <label>Event Name *</label>
-                <input
-                  type="text"
-                  className="form-control"
-                  placeholder="e.g. DOGFOOD 2026 Spring Hackathon"
-                  value={eventForm.name}
-                  onChange={e => setEventForm({ ...eventForm, name: e.target.value })}
-                  required
-                />
+        <div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))', gap: '1.5rem', marginBottom: '1.5rem' }}>
+            {/* Create Event Card */}
+            <div className="card-panel" style={{ margin: 0 }}>
+              <h2>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
+                Create New Event
+              </h2>
+              <p style={{ color: 'var(--text-muted)', fontSize: '0.88rem', marginBottom: '1.25rem', lineHeight: 1.55 }}>
+                Establish a new hackathon instance with strict UTC submission deadlines and lifecycle phases.
+              </p>
+              <form onSubmit={handleCreateEvent}>
+                <div className="form-group">
+                  <label>Event Name *</label>
+                  <input
+                    type="text"
+                    className="form-control"
+                    placeholder="e.g. DOGFOOD 2026 Spring Hackathon"
+                    value={eventForm.name}
+                    onChange={e => setEventForm({ ...eventForm, name: e.target.value })}
+                    required
+                  />
+                </div>
+                <div className="form-group">
+                  <label>Submission Deadline (UTC) *</label>
+                  <input
+                    type="datetime-local"
+                    className="form-control"
+                    value={eventForm.submissions_close ? eventForm.submissions_close.slice(0, 16) : ''}
+                    onChange={e => setEventForm({ ...eventForm, submissions_close: new Date(e.target.value).toISOString() })}
+                    required
+                  />
+                </div>
+                <button type="submit" className="btn" style={{ width: '100%' }}>
+                  Create Event
+                </button>
+              </form>
+            </div>
+
+            {/* Existing Events List */}
+            <div className="card-panel" style={{ margin: 0 }}>
+              <h2>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                Configured Events ({events.length})
+              </h2>
+              <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginBottom: '1rem' }}>
+                Click any event below to select it as the active event for tracks, judging, and community voting.
+              </p>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                {events.map(ev => {
+                  const isEvClosed = new Date(ev.submissions_close) < new Date();
+                  const isSelected = ev.id === selectedEventId;
+                  return (
+                    <div
+                      key={ev.id}
+                      onClick={() => handleEventChange(ev.id)}
+                      style={{
+                        background: isSelected ? 'rgba(56, 189, 248, 0.12)' : 'var(--surface-raised)',
+                        border: isSelected ? '1px solid var(--primary)' : '1px solid var(--surface-border)',
+                        padding: '0.95rem 1.15rem',
+                        borderRadius: 'var(--radius)',
+                        cursor: 'pointer',
+                        transition: 'all 0.15s ease'
+                      }}
+                      title="Click to select this event"
+                    >
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.35rem' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                          <strong style={{ fontSize: '1.05rem', color: isSelected ? 'var(--primary)' : 'var(--text-bright)' }}>{ev.name}</strong>
+                          {isSelected && (
+                            <span className="tag-version" style={{ fontSize: '0.65rem', padding: '0.15rem 0.45rem' }}>Active</span>
+                          )}
+                        </div>
+                        <span className={`status-badge ${isEvClosed ? 'draft' : 'submitted'}`} style={{ fontSize: '0.72rem' }}>
+                          {isEvClosed ? 'Closed' : 'Accepting'}
+                        </span>
+                      </div>
+                      <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+                        Deadline: {new Date(ev.submissions_close).toUTCString()}
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
-              <div className="form-group">
-                <label>Submission Deadline (UTC) *</label>
-                <input
-                  type="datetime-local"
-                  className="form-control"
-                  value={eventForm.submissions_close ? eventForm.submissions_close.slice(0, 16) : ''}
-                  onChange={e => setEventForm({ ...eventForm, submissions_close: new Date(e.target.value).toISOString() })}
-                  required
-                />
-              </div>
-              <button type="submit" className="btn" style={{ width: '100%' }}>
-                Create Event
-              </button>
-            </form>
+            </div>
           </div>
 
-          {/* Existing Events List */}
-          <div className="card-panel">
-            <h2>
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-              Configured Events ({events.length})
-            </h2>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-              {events.map(ev => {
-                const isEvClosed = new Date(ev.submissions_close) < new Date();
-                return (
-                  <div key={ev.id} style={{ background: 'var(--surface-raised)', border: '1px solid var(--surface-border)', padding: '1rem 1.15rem', borderRadius: 'var(--radius)' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.35rem' }}>
-                      <strong style={{ fontSize: '1.05rem', color: 'var(--text-bright)' }}>{ev.name}</strong>
-                      <span className={`status-badge ${isEvClosed ? 'draft' : 'submitted'}`} style={{ fontSize: '0.72rem' }}>
-                        {isEvClosed ? 'Closed' : 'Accepting'}
-                      </span>
+          {/* Tracks & Prizes for Selected Event */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))', gap: '1.5rem' }}>
+            {/* Tracks Management Card */}
+            <div className="card-panel" style={{ margin: 0 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', flexWrap: 'wrap', gap: '0.5rem' }}>
+                <h2 style={{ margin: 0, padding: 0, border: 'none' }}>
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/></svg>
+                  Tracks ({eventDetails?.tracks?.length || 0})
+                </h2>
+                <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+                  Event: <strong>{eventDetails?.event?.name || selectedEventId}</strong>
+                </span>
+              </div>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.65rem', marginBottom: '1.25rem', maxHeight: '240px', overflowY: 'auto' }}>
+                {(eventDetails?.tracks || []).map(tr => (
+                  <div key={tr.id} style={{ background: 'var(--surface-raised)', border: '1px solid var(--surface-border-subtle)', padding: '0.65rem 0.95rem', borderRadius: 'var(--radius)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <div>
+                      <strong style={{ color: 'var(--text-bright)', fontSize: '0.92rem' }}>{tr.name}</strong>
+                      {tr.description && (
+                        <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>{tr.description}</div>
+                      )}
                     </div>
-                    <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
-                      Deadline: {new Date(ev.submissions_close).toUTCString()}
-                    </div>
+                    <code style={{ fontSize: '0.75rem', color: 'var(--text-dim)' }}>{tr.id}</code>
                   </div>
-                );
-              })}
+                ))}
+              </div>
+
+              <form onSubmit={handleAddTrack} style={{ borderTop: '1px solid var(--surface-border-subtle)', paddingTop: '1rem' }}>
+                <div style={{ fontSize: '0.85rem', fontWeight: 700, color: 'var(--text-bright)', marginBottom: '0.75rem' }}>
+                  + Add Track to {eventDetails?.event?.name || 'Selected Event'}
+                </div>
+                <div className="form-group">
+                  <label>Track Name *</label>
+                  <input
+                    type="text"
+                    className="form-control"
+                    placeholder="e.g. AI / Machine Learning"
+                    value={trackForm.name}
+                    onChange={e => setTrackForm({ ...trackForm, name: e.target.value })}
+                    required
+                  />
+                </div>
+                <div className="form-group">
+                  <label>Description</label>
+                  <input
+                    type="text"
+                    className="form-control"
+                    placeholder="e.g. Projects leveraging intelligent agents or machine learning"
+                    value={trackForm.description}
+                    onChange={e => setTrackForm({ ...trackForm, description: e.target.value })}
+                  />
+                </div>
+                <button type="submit" className="btn btn-secondary" style={{ width: '100%' }} disabled={addingTrack}>
+                  {addingTrack ? 'Adding Track...' : 'Add Competition Track'}
+                </button>
+              </form>
+            </div>
+
+            {/* Prizes Management Card */}
+            <div className="card-panel" style={{ margin: 0 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', flexWrap: 'wrap', gap: '0.5rem' }}>
+                <h2 style={{ margin: 0, padding: 0, border: 'none' }}>
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+                  Prizes ({eventDetails?.prizes?.length || 0})
+                </h2>
+                <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+                  Total Pool: <strong>${(eventDetails?.prizes || []).reduce((s, p) => s + (p.amount || 0), 0).toLocaleString()}</strong>
+                </span>
+              </div>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.65rem', marginBottom: '1.25rem', maxHeight: '240px', overflowY: 'auto' }}>
+                {(eventDetails?.prizes || []).map(pr => (
+                  <div key={pr.id} style={{ background: 'var(--surface-raised)', border: '1px solid var(--surface-border-subtle)', padding: '0.65rem 0.95rem', borderRadius: 'var(--radius)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <div>
+                      <strong style={{ color: 'var(--text-bright)', fontSize: '0.92rem' }}>{pr.name}</strong>
+                      {pr.description && (
+                        <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>{pr.description}</div>
+                      )}
+                    </div>
+                    <span style={{ fontWeight: 800, color: 'var(--success)', fontFamily: 'var(--font-mono)', fontSize: '0.95rem' }}>
+                      ${Number(pr.amount || 0).toLocaleString()}
+                    </span>
+                  </div>
+                ))}
+              </div>
+
+              <form onSubmit={handleAddPrize} style={{ borderTop: '1px solid var(--surface-border-subtle)', paddingTop: '1rem' }}>
+                <div style={{ fontSize: '0.85rem', fontWeight: 700, color: 'var(--text-bright)', marginBottom: '0.75rem' }}>
+                  + Add Prize Category
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
+                  <div className="form-group">
+                    <label>Prize Name *</label>
+                    <input
+                      type="text"
+                      className="form-control"
+                      placeholder="e.g. Best UI/UX"
+                      value={prizeForm.name}
+                      onChange={e => setPrizeForm({ ...prizeForm, name: e.target.value })}
+                      required
+                    />
+                  </div>
+                  <div className="form-group">
+                    <label>Amount ($)</label>
+                    <input
+                      type="number"
+                      min="0"
+                      step="100"
+                      className="form-control"
+                      value={prizeForm.amount}
+                      onChange={e => setPrizeForm({ ...prizeForm, amount: e.target.value })}
+                    />
+                  </div>
+                </div>
+                <div className="form-group">
+                  <label>Description</label>
+                  <input
+                    type="text"
+                    className="form-control"
+                    placeholder="e.g. Exceptional design execution and aesthetics"
+                    value={prizeForm.description}
+                    onChange={e => setPrizeForm({ ...prizeForm, description: e.target.value })}
+                  />
+                </div>
+                <button type="submit" className="btn btn-secondary" style={{ width: '100%' }} disabled={addingPrize}>
+                  {addingPrize ? 'Adding Prize...' : 'Add Prize to Event'}
+                </button>
+              </form>
             </div>
           </div>
         </div>

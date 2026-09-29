@@ -1,4 +1,4 @@
-﻿import React, { useState } from 'react';
+import React, { useState } from 'react';
 
 export default function LoginModal({ isOpen, onClose, onLoginSuccess }) {
   const [email, setEmail] = useState('');
@@ -102,12 +102,38 @@ export default function LoginModal({ isOpen, onClose, onLoginSuccess }) {
         </form>
 
         <div style={{ marginTop: '1.5rem', borderTop: '1px solid var(--surface-border-subtle)', paddingTop: '1.15rem', fontSize: '0.8rem', color: 'var(--text-muted)' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', marginBottom: '0.4rem', color: 'var(--text-bright)', fontWeight: 600 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', marginBottom: '0.5rem', color: 'var(--text-bright)', fontWeight: 600 }}>
             <span>⚡</span>
-            <span>Evaluator Seeded Fast-Switch:</span>
+            <span>Quick-Fill Seeded Credentials:</span>
+          </div>
+          <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap', marginBottom: '0.75rem' }}>
+            <button
+              type="button"
+              className="demo-btn"
+              onClick={() => { setEmail('organizer@example.org'); setPassword('organizer123'); setError(null); }}
+              title="Fill Organizer credentials"
+            >
+              Organizer (organizer123)
+            </button>
+            <button
+              type="button"
+              className="demo-btn"
+              onClick={() => { setEmail('tomas.varga@example.org'); setPassword('judge123'); setError(null); }}
+              title="Fill Judge Tomas Varga credentials"
+            >
+              Judge (judge123)
+            </button>
+            <button
+              type="button"
+              className="demo-btn"
+              onClick={() => { setEmail('priya1@example.org'); setPassword('participant123'); setError(null); }}
+              title="Fill Participant Priya credentials"
+            >
+              Participant (participant123)
+            </button>
           </div>
           <p style={{ margin: 0, color: 'var(--text-dim)', lineHeight: 1.45 }}>
-            For rapid evaluation, you can also use the seeded quick-switcher bar at the top of the viewport to instantly assume any seeded role.
+            You can also use the evaluator fast-switch bar at the top of the page to assume sessions instantly.
           </p>
         </div>
       </div>

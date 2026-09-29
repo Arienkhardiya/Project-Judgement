@@ -33,7 +33,7 @@ export function seedDatabase(db = getDatabase(), fixturesPath) {
   // 2. Seed Event
   const evt = fixtures.event;
   const insertEvent = db.prepare(`
-    INSERT OR REPLACE INTO events (id, name, description, start_time, end_time, submissions_close)
+    INSERT OR IGNORE INTO events (id, name, description, start_time, end_time, submissions_close)
     VALUES (?, ?, ?, ?, ?, ?)
   `);
   insertEvent.run(
@@ -47,7 +47,7 @@ export function seedDatabase(db = getDatabase(), fixturesPath) {
 
   // 3. Seed Tracks
   const insertTrack = db.prepare(`
-    INSERT OR REPLACE INTO tracks (id, event_id, name, description)
+    INSERT OR IGNORE INTO tracks (id, event_id, name, description)
     VALUES (?, ?, ?, ?)
   `);
   for (const trk of fixtures.tracks) {
@@ -56,7 +56,7 @@ export function seedDatabase(db = getDatabase(), fixturesPath) {
 
   // 4. Seed Standard Prizes for event
   const insertPrize = db.prepare(`
-    INSERT OR REPLACE INTO prizes (id, event_id, track_id, name, description, amount)
+    INSERT OR IGNORE INTO prizes (id, event_id, track_id, name, description, amount)
     VALUES (?, ?, ?, ?, ?, ?)
   `);
   insertPrize.run('prz_grand', evt.id, null, 'Grand Prize', 'Best overall hackathon project', 5000);
@@ -67,7 +67,7 @@ export function seedDatabase(db = getDatabase(), fixturesPath) {
 
   // 5. Seed Users & User Roles
   const insertUser = db.prepare(`
-    INSERT OR REPLACE INTO users (id, email, name, password_hash)
+    INSERT OR IGNORE INTO users (id, email, name, password_hash)
     VALUES (?, ?, ?, ?)
   `);
   const insertUserRole = db.prepare(`
@@ -96,11 +96,11 @@ export function seedDatabase(db = getDatabase(), fixturesPath) {
 
   // Seed Teams and Members
   const insertTeam = db.prepare(`
-    INSERT OR REPLACE INTO teams (id, event_id, name, invite_code)
+    INSERT OR IGNORE INTO teams (id, event_id, name, invite_code)
     VALUES (?, ?, ?, ?)
   `);
   const insertMember = db.prepare(`
-    INSERT OR REPLACE INTO team_members (team_id, user_id, role)
+    INSERT OR IGNORE INTO team_members (team_id, user_id, role)
     VALUES (?, ?, ?)
   `);
 
@@ -130,9 +130,14 @@ export function seedDatabase(db = getDatabase(), fixturesPath) {
     }
   }
 
+  if (!seededParticipantUserId) {
+    const firstMember = db.prepare(`SELECT user_id FROM team_members WHERE team_id = 'tm_01' ORDER BY created_at ASC LIMIT 1`).get();
+    if (firstMember) seededParticipantUserId = firstMember.user_id;
+  }
+
   // 6. Seed Projects from fixtures (preserve all awkward cases including duplicate projects for tm_07)
   const insertProject = db.prepare(`
-    INSERT OR REPLACE INTO projects (id, team_id, track_id, title, summary, description, repo_url, demo_url, status, submitted_at)
+    INSERT OR IGNORE INTO projects (id, team_id, track_id, title, summary, description, repo_url, demo_url, status, submitted_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'SUBMITTED', ?)
   `);
   for (const prj of fixtures.projects) {
@@ -151,13 +156,13 @@ export function seedDatabase(db = getDatabase(), fixturesPath) {
 
   // 7. Seed Rubric and Criteria
   const insertRubric = db.prepare(`
-    INSERT OR REPLACE INTO rubrics (id, event_id, name, is_locked)
+    INSERT OR IGNORE INTO rubrics (id, event_id, name, is_locked)
     VALUES (?, ?, ?, 1)
   `);
   insertRubric.run('rub_01', evt.id, 'Official Scoring Rubric');
 
   const insertCriterion = db.prepare(`
-    INSERT OR REPLACE INTO rubric_criteria (id, rubric_id, criterion_key, name, description, weight, min_score, max_score)
+    INSERT OR IGNORE INTO rubric_criteria (id, rubric_id, criterion_key, name, description, weight, min_score, max_score)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `);
   insertCriterion.run('crit_func', 'rub_01', 'functionality', 'Functionality', 'Does the solution work properly?', 1.0, 1.0, 5.0);
@@ -166,15 +171,15 @@ export function seedDatabase(db = getDatabase(), fixturesPath) {
 
   // 8. Seed Judge Assignments & Scores from fixtures
   const insertAssignment = db.prepare(`
-    INSERT OR REPLACE INTO judge_assignments (id, judge_user_id, project_id, batch_id, status)
+    INSERT OR IGNORE INTO judge_assignments (id, judge_user_id, project_id, batch_id, status)
     VALUES (?, ?, ?, 'default', 'SUBMITTED')
   `);
   const insertScore = db.prepare(`
-    INSERT OR REPLACE INTO scores (id, judge_assignment_id, judge_user_id, project_id, comment, status, submitted_at)
+    INSERT OR IGNORE INTO scores (id, judge_assignment_id, judge_user_id, project_id, comment, status, submitted_at)
     VALUES (?, ?, ?, ?, ?, 'SUBMITTED', datetime('now', 'utc'))
   `);
   const insertScoreValue = db.prepare(`
-    INSERT OR REPLACE INTO score_values (id, score_id, criterion_key, value)
+    INSERT OR IGNORE INTO score_values (id, score_id, criterion_key, value)
     VALUES (?, ?, ?, ?)
   `);
 
@@ -194,7 +199,7 @@ export function seedDatabase(db = getDatabase(), fixturesPath) {
 
   // 9. Create Fixed Test Sessions
   const insertSession = db.prepare(`
-    INSERT OR REPLACE INTO sessions (token, user_id, expires_at)
+    INSERT OR IGNORE INTO sessions (token, user_id, expires_at)
     VALUES (?, ?, datetime('now', '+30 days'))
   `);
 
@@ -209,28 +214,36 @@ export function seedDatabase(db = getDatabase(), fixturesPath) {
   if (seededParticipantUserId) {
     insertSession.run('prt_2e88', seededParticipantUserId);
   }
+
+  // In test environment, reset votes so that integration test suites run idempotently
+  if (process.env.NODE_ENV === 'test') {
+    db.prepare('DELETE FROM votes').run();
+  }
+
   // 10. Seed T3 Voting Window for Event
   const insertVotingWindow = db.prepare(`
-    INSERT OR REPLACE INTO voting_windows (id, event_id, title, start_time, end_time, is_active)
+    INSERT OR IGNORE INTO voting_windows (id, event_id, title, start_time, end_time, is_active)
     VALUES (?, ?, ?, datetime('now', '-1 day'), datetime('now', '+7 days'), 1)
   `);
   insertVotingWindow.run('vwin_01', evt.id, 'Official Community Choice Voting Window');
 
   // 11. Seed T4 Sample Verifiable Certificate for prj_01
-  db.prepare("DELETE FROM verifiable_records WHERE entity_id = 'prj_01'").run();
-  const certPayload = {
-    project_id: 'prj_01',
-    title: 'Quiet Hours',
-    team: 'tm_01',
-    event: evt.id,
-    verified_at: '2026-03-01T20:00:00Z'
-  };
-  recordVerifiableEvent(db, {
-    entityType: 'certificate',
-    entityId: 'prj_01',
-    payload: certPayload,
-    signerIdentity: 'dogfood:cert_authority:2026'
-  });
+  const existingCert = db.prepare("SELECT id FROM verifiable_records WHERE entity_id = 'prj_01' AND entity_type = 'certificate'").get();
+  if (!existingCert) {
+    const certPayload = {
+      project_id: 'prj_01',
+      title: 'Quiet Hours',
+      team: 'tm_01',
+      event: evt.id,
+      verified_at: '2026-03-01T20:00:00Z'
+    };
+    recordVerifiableEvent(db, {
+      entityType: 'certificate',
+      entityId: 'prj_01',
+      payload: certPayload,
+      signerIdentity: 'dogfood:cert_authority:2026'
+    });
+  }
 
 
   const credentials = {

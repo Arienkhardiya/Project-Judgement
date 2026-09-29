@@ -9,8 +9,23 @@ import LoginModal from './components/LoginModal.jsx';
 
 export default function App() {
   const [user, setUser] = useState(null);
-  const [activeTab, setActiveTab] = useState('gallery');
+  const [activeTab, setActiveTabState] = useState(() => {
+    try {
+      return localStorage.getItem('dogfood_active_tab') || 'gallery';
+    } catch {
+      return 'gallery';
+    }
+  });
   const [isLoginOpen, setIsLoginOpen] = useState(false);
+
+  const setActiveTab = (tab) => {
+    setActiveTabState(tab);
+    try {
+      localStorage.setItem('dogfood_active_tab', tab);
+    } catch {
+      // ignore
+    }
+  };
 
   useEffect(() => {
     checkCurrentUser();
@@ -21,6 +36,19 @@ export default function App() {
       .then(res => res.json())
       .then(data => {
         setUser(data.user);
+        // If current tab requires role that user doesn't have, fallback to gallery
+        const userRoles = data.user?.roles || [];
+        setActiveTabState(currentTab => {
+          if (currentTab === 'organizer' && !userRoles.includes('organizer') && !userRoles.includes('admin')) {
+            try { localStorage.setItem('dogfood_active_tab', 'gallery'); } catch {}
+            return 'gallery';
+          }
+          if (currentTab === 'judge' && !userRoles.includes('judge') && !userRoles.includes('admin')) {
+            try { localStorage.setItem('dogfood_active_tab', 'gallery'); } catch {}
+            return 'gallery';
+          }
+          return currentTab;
+        });
       })
       .catch(err => console.error('Auth check error:', err));
   };
