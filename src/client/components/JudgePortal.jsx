@@ -1,6 +1,9 @@
-﻿import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
+import JudgePairwiseView from './JudgePairwiseView.jsx';
 
 export default function JudgePortal({ user, onRequireLogin }) {
+  const [activeMode, setActiveMode] = useState('rubric'); // 'rubric' | 'pairwise'
+  const [pairwisePendingCount, setPairwisePendingCount] = useState(null);
   const [assignments, setAssignments] = useState([]);
   const [rubric, setRubric] = useState(null);
   const [activeProject, setActiveProject] = useState(null);
@@ -16,7 +19,21 @@ export default function JudgePortal({ user, onRequireLogin }) {
       return;
     }
     loadAssignments();
+    loadPairwiseSummary();
   }, [user]);
+
+  const loadPairwiseSummary = async () => {
+    try {
+      const res = await fetch('/api/judge/pairwise/assignments');
+      if (res.ok) {
+        const data = await res.json();
+        const pending = (data.pairs || []).filter(p => p.pair_status === 'PENDING').length;
+        setPairwisePendingCount(pending);
+      }
+    } catch {
+      // Ignore background badge error
+    }
+  };
 
   const loadAssignments = async () => {
     setLoading(true);
@@ -131,20 +148,65 @@ export default function JudgePortal({ user, onRequireLogin }) {
               <span className="tag-version-dot"></span>
               Judge Evaluation Workbench
             </div>
-            <h1 className="dashboard-title">Review & Scoring Console</h1>
+            <h1 className="dashboard-title">
+              {activeMode === 'pairwise' ? 'Pairwise Evaluation Console' : 'Review & Scoring Console'}
+            </h1>
             <p className="dashboard-desc">
-              Welcome, <strong>{user.name}</strong>. Evaluate assigned submissions against the official weighted rubric. Blind judging is enforced with cryptographic isolation.
+              {activeMode === 'pairwise'
+                ? <>Welcome, <strong>{user.name}</strong>. Evaluate assigned head-to-head project pairs. Decisions directly feed the Bradley-Terry ranking engine with peer isolation.</>
+                : <>Welcome, <strong>{user.name}</strong>. Evaluate assigned submissions against the official weighted rubric. Blind judging is enforced with cryptographic isolation.</>
+              }
             </p>
           </div>
 
           <div className="dashboard-actions">
             <div className="isolation-pill">
               <span className="isolation-dot"></span>
-              <span>Isolation: <strong>Strict (Peer Scores Sealed)</strong></span>
+              <span>Isolation: <strong>Strict (Peer Reviews Sealed)</strong></span>
             </div>
           </div>
         </div>
       </div>
+
+      {/* Judge Mode Switcher */}
+      <nav className="subtab-nav" aria-label="Judge evaluation mode" style={{ marginTop: '1.25rem' }}>
+        <button
+          type="button"
+          className={`subtab-btn ${activeMode === 'rubric' ? 'active' : ''}`}
+          onClick={() => setActiveMode('rubric')}
+        >
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
+          </svg>
+          Rubric Scoring (T2 Absolute)
+          <span style={{ marginLeft: '0.45rem', fontSize: '0.72rem', background: 'rgba(255, 255, 255, 0.1)', padding: '0.12rem 0.5rem', borderRadius: '999px', fontWeight: 700 }}>
+            {pendingCount} pending
+          </span>
+        </button>
+
+        <button
+          type="button"
+          className={`subtab-btn ${activeMode === 'pairwise' ? 'active' : ''}`}
+          onClick={() => setActiveMode('pairwise')}
+        >
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <rect x="3" y="3" width="7" height="7"/>
+            <rect x="14" y="14" width="7" height="7"/>
+            <path d="M10 7h4v4"/>
+          </svg>
+          Pairwise Comparison (Bonus B)
+          {pairwisePendingCount !== null && (
+            <span style={{ marginLeft: '0.45rem', fontSize: '0.72rem', background: 'rgba(56, 189, 248, 0.18)', color: '#7dd3fc', padding: '0.12rem 0.5rem', borderRadius: '999px', fontWeight: 700 }}>
+              {pairwisePendingCount} pending
+            </span>
+          )}
+        </button>
+      </nav>
+
+      {activeMode === 'pairwise' ? (
+        <JudgePairwiseView user={user} />
+      ) : (
+        <>
 
       {/* Real-Data Overview Stat Cards */}
       <div className="stat-grid">
@@ -435,6 +497,8 @@ export default function JudgePortal({ user, onRequireLogin }) {
           </div>
         )}
       </div>
+      </>
+      )}
     </div>
   );
 }

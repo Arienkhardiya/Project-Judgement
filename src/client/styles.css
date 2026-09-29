@@ -441,6 +441,23 @@ main {
   border-radius: var(--radius-sm);
 }
 
+.btn-xs {
+  padding: 0.25rem 0.6rem;
+  font-size: 0.75rem;
+  border-radius: var(--radius-sm);
+}
+
+.btn-primary {
+  background: var(--primary);
+  color: var(--primary-contrast);
+  border: 1px solid transparent;
+}
+
+.btn-primary:hover {
+  background: var(--primary-hover);
+  color: var(--primary-contrast);
+}
+
 /* ==========================================================================
    Layout Containers & Headers
    ========================================================================== */
