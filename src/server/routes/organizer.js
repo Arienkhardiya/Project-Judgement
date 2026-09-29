@@ -5,6 +5,7 @@ import { requireOrganizer } from '../middleware/auth.js';
 import { calculateNormalization } from '../services/normalization.js';
 import { generateResultsCsv } from '../services/csv.js';
 import { exportEventData, importEventData } from '../services/bulk.js';
+import { calculatePairwiseRanking, generatePairAssignments } from '../services/pairwise.js';
 
 const router = express.Router();
 
@@ -20,7 +21,7 @@ router.get('/dashboard', requireOrganizer, (req, res) => {
 
   // 1. Overall Assignment Stats
   const totals = db.prepare(`
-    SELECT 
+    SELECT
       COUNT(*) as total_assignments,
       SUM(CASE WHEN ja.status = 'ASSIGNED' THEN 1 ELSE 0 END) as not_started,
       SUM(CASE WHEN ja.status = 'IN_PROGRESS' THEN 1 ELSE 0 END) as in_progress,
@@ -33,7 +34,7 @@ router.get('/dashboard', requireOrganizer, (req, res) => {
 
   // 2. Track Breakdown
   const tracks = db.prepare(`
-    SELECT 
+    SELECT
       tr.id as track_id,
       tr.name as track_name,
       COUNT(ja.id) as total_assignments,
@@ -49,7 +50,7 @@ router.get('/dashboard', requireOrganizer, (req, res) => {
 
   // 3. Judge Breakdown
   const judges = db.prepare(`
-    SELECT 
+    SELECT
       u.id as judge_id,
       u.name,
       u.email,
@@ -65,7 +66,7 @@ router.get('/dashboard', requireOrganizer, (req, res) => {
 
   // 4. Batch Breakdown
   const batches = db.prepare(`
-    SELECT 
+    SELECT
       COALESCE(ja.batch_id, 'default') as batch_id,
       COUNT(*) as total,
       SUM(CASE WHEN ja.status = 'SUBMITTED' THEN 1 ELSE 0 END) as submitted
@@ -83,8 +84,8 @@ router.get('/dashboard', requireOrganizer, (req, res) => {
       not_started: totals.not_started || 0,
       in_progress: totals.in_progress || 0,
       submitted: totals.submitted || 0,
-      completion_percentage: totals.total_assignments 
-        ? Number(((totals.submitted / totals.total_assignments) * 100).toFixed(1)) 
+      completion_percentage: totals.total_assignments
+        ? Number(((totals.submitted / totals.total_assignments) * 100).toFixed(1))
         : 0,
     },
     tracks,
@@ -415,6 +416,261 @@ router.put('/rubric/criteria', requireOrganizer, (req, res) => {
   `).run('aud_' + crypto.randomBytes(6).toString('hex'), req.user.id, rubric.id, JSON.stringify({ count: criteria.length }));
 
   res.json({ message: 'Rubric updated successfully' });
+});
+
+// =========================================================================
+// BONUS B: PAIRWISE COMPARISON ORGANIZER ENDPOINTS
+// =========================================================================
+
+// POST /api/organizer/pairwise/assignments/generate - Algorithmic pair generation
+router.post('/pairwise/assignments/generate', requireOrganizer, (req, res) => {
+  const db = getDatabase();
+  const { event_id, track_id, comparisons_per_project = 5 } = req.body;
+
+  const event = event_id
+    ? db.prepare('SELECT id, name FROM events WHERE id = ?').get(event_id)
+    : db.prepare('SELECT id, name FROM events ORDER BY created_at DESC LIMIT 1').get();
+
+  if (!event) {
+    return res.status(404).json({ error: 'Event not found' });
+  }
+
+  // Fetch submitted projects
+  let projectsQuery = `
+    SELECT p.id, p.track_id, p.title
+    FROM projects p
+    JOIN teams t ON t.id = p.team_id
+    WHERE t.event_id = ? AND p.status = 'SUBMITTED'
+  `;
+  const params = [event.id];
+  if (track_id) {
+    projectsQuery += ' AND p.track_id = ?';
+    params.push(track_id);
+  }
+  projectsQuery += ' ORDER BY p.id ASC';
+
+  const projects = db.prepare(projectsQuery).all(...params);
+
+  // Fetch eligible judges
+  let judges = [];
+  if (track_id) {
+    judges = db.prepare(`
+      SELECT DISTINCT jt.judge_user_id as id
+      FROM judge_tracks jt
+      WHERE jt.track_id = ?
+      ORDER BY jt.judge_user_id ASC
+    `).all(track_id);
+  }
+  if (judges.length === 0) {
+    judges = db.prepare(`
+      SELECT DISTINCT u.id
+      FROM users u
+      JOIN user_roles ur ON ur.user_id = u.id
+      WHERE ur.role_id = 'judge'
+      ORDER BY u.id ASC
+    `).all();
+  }
+
+  const generated = generatePairAssignments(projects, judges, {
+    eventId: event.id,
+    trackId: track_id || null,
+    comparisonsPerProject: Number(comparisons_per_project) || 5,
+  });
+
+  const insertPair = db.prepare(`
+    INSERT OR IGNORE INTO pairwise_pairs (
+      id, event_id, judge_user_id, project_a_id, project_b_id, track_id, status
+    ) VALUES (?, ?, ?, ?, ?, ?, 'PENDING')
+  `);
+
+  let createdCount = 0;
+  for (const pair of generated.pairs) {
+    const info = insertPair.run(
+      pair.id,
+      pair.event_id,
+      pair.judge_user_id,
+      pair.project_a_id,
+      pair.project_b_id,
+      pair.track_id
+    );
+    if (info.changes > 0) createdCount++;
+  }
+
+  // Audit log
+  db.prepare(`
+    INSERT INTO audit_logs (id, actor_user_id, action, entity_type, entity_id, details_json)
+    VALUES (?, ?, 'PAIRWISE_ASSIGNMENTS_GENERATED', 'pairwise_pairs', ?, ?)
+  `).run(
+    'aud_' + crypto.randomBytes(6).toString('hex'),
+    req.user.id,
+    event.id,
+    JSON.stringify({ createdCount, totalPlanned: generated.pairs.length, metadata: generated.metadata })
+  );
+
+  res.status(201).json({
+    message: `Pairwise assignment complete. Created ${createdCount} pair assignments.`,
+    createdCount,
+    metadata: generated.metadata,
+  });
+});
+
+// GET /api/organizer/pairwise/rankings - Pairwise Bradley-Terry ranking results
+router.get('/pairwise/rankings', requireOrganizer, (req, res) => {
+  const db = getDatabase();
+  const eventId = req.query.event_id;
+  const trackId = req.query.track_id;
+
+  const event = eventId
+    ? db.prepare('SELECT id, name FROM events WHERE id = ?').get(eventId)
+    : db.prepare('SELECT id, name FROM events ORDER BY created_at DESC LIMIT 1').get();
+
+  if (!event) {
+    return res.status(404).json({ error: 'Event not found' });
+  }
+
+  // 1. Fetch all submitted projects in scope
+  let projectsQuery = `
+    SELECT p.id, p.title, p.track_id, tr.name as track_name, t.name as team_name
+    FROM projects p
+    JOIN teams t ON t.id = p.team_id
+    LEFT JOIN tracks tr ON tr.id = p.track_id
+    WHERE t.event_id = ? AND p.status = 'SUBMITTED'
+  `;
+  const projParams = [event.id];
+  if (trackId) {
+    projectsQuery += ' AND p.track_id = ?';
+    projParams.push(trackId);
+  }
+  projectsQuery += ' ORDER BY p.id ASC';
+
+  const projects = db.prepare(projectsQuery).all(...projParams);
+  const projectIds = projects.map(p => p.id);
+
+  if (projectIds.length === 0) {
+    return res.json({
+      event_id: event.id,
+      event_name: event.name,
+      converged: true,
+      iterations: 0,
+      total_comparisons: 0,
+      projects: [],
+    });
+  }
+
+  // 2. Fetch completed comparisons
+  let comparisonsQuery = `
+    SELECT c.id, c.project_a_id, c.project_b_id, c.winner_id, c.is_tie
+    FROM pairwise_comparisons c
+    WHERE c.event_id = ?
+  `;
+  const cmpParams = [event.id];
+  if (trackId) {
+    comparisonsQuery += ' AND (c.project_a_id IN (SELECT id FROM projects WHERE track_id = ?) AND c.project_b_id IN (SELECT id FROM projects WHERE track_id = ?))';
+    cmpParams.push(trackId, trackId);
+  }
+
+  const rawComparisons = db.prepare(comparisonsQuery).all(...cmpParams);
+
+  // Normalize comparisons for pure solver
+  const normalizedComparisons = rawComparisons.map(c => ({
+    project_a_id: c.project_a_id,
+    project_b_id: c.project_b_id,
+    winner_id: c.winner_id,
+    is_tie: c.is_tie === 1 || c.is_tie === true,
+  }));
+
+  // 3. Compute Bradley-Terry ranking via solver
+  const rankingResult = calculatePairwiseRanking(normalizedComparisons, projectIds);
+
+  // 4. Enrich results with project metadata
+  const projectMetaMap = new Map();
+  for (const p of projects) {
+    projectMetaMap.set(p.id, p);
+  }
+
+  const enrichedProjects = rankingResult.projects.map(rp => {
+    const meta = projectMetaMap.get(rp.project_id) || {};
+    return {
+      ...rp,
+      title: meta.title || rp.project_id,
+      track_id: meta.track_id || null,
+      track_name: meta.track_name || 'General',
+      team_name: meta.team_name || 'Independent',
+    };
+  });
+
+  // Audit log
+  db.prepare(`
+    INSERT INTO audit_logs (id, actor_user_id, action, entity_type, entity_id, details_json)
+    VALUES (?, ?, 'PAIRWISE_RANKINGS_VIEWED', 'events', ?, ?)
+  `).run(
+    'aud_' + crypto.randomBytes(6).toString('hex'),
+    req.user.id,
+    event.id,
+    JSON.stringify({ projectCount: enrichedProjects.length, comparisonCount: normalizedComparisons.length })
+  );
+
+  res.json({
+    event_id: event.id,
+    event_name: event.name,
+    converged: rankingResult.converged,
+    iterations: rankingResult.iterations,
+    total_comparisons: normalizedComparisons.length,
+    projects: enrichedProjects,
+  });
+});
+
+// GET /api/organizer/pairwise/status - Pairwise progress and summary status
+router.get('/pairwise/status', requireOrganizer, (req, res) => {
+  const db = getDatabase();
+  const eventId = req.query.event_id;
+
+  const event = eventId
+    ? db.prepare('SELECT id, name FROM events WHERE id = ?').get(eventId)
+    : db.prepare('SELECT id, name FROM events ORDER BY created_at DESC LIMIT 1').get();
+
+  if (!event) {
+    return res.status(404).json({ error: 'Event not found' });
+  }
+
+  const totals = db.prepare(`
+    SELECT
+      COUNT(*) as total_pairs,
+      SUM(CASE WHEN status = 'PENDING' THEN 1 ELSE 0 END) as pending_pairs,
+      SUM(CASE WHEN status = 'COMPLETED' THEN 1 ELSE 0 END) as completed_pairs
+    FROM pairwise_pairs
+    WHERE event_id = ?
+  `).get(event.id);
+
+  const total = totals.total_pairs || 0;
+  const completed = totals.completed_pairs || 0;
+  const pending = totals.pending_pairs || 0;
+
+  const judgeStats = db.prepare(`
+    SELECT
+      u.id as judge_id,
+      u.name as judge_name,
+      COUNT(pwp.id) as total_assigned,
+      SUM(CASE WHEN pwp.status = 'COMPLETED' THEN 1 ELSE 0 END) as completed,
+      SUM(CASE WHEN pwp.status = 'PENDING' THEN 1 ELSE 0 END) as pending
+    FROM pairwise_pairs pwp
+    JOIN users u ON u.id = pwp.judge_user_id
+    WHERE pwp.event_id = ?
+    GROUP BY u.id, u.name
+    ORDER BY completed DESC, u.name ASC
+  `).all(event.id);
+
+  res.json({
+    event_id: event.id,
+    event_name: event.name,
+    totals: {
+      total,
+      completed,
+      pending,
+      completion_percentage: total ? Number(((completed / total) * 100).toFixed(1)) : 0,
+    },
+    judges: judgeStats,
+  });
 });
 
 export default router;

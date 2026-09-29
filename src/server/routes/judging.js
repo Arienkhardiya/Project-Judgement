@@ -46,7 +46,7 @@ router.get('/scores', requireJudge, (req, res) => {
 
   // Fetch only this judge's scores
   const scores = db.prepare(`
-    SELECT 
+    SELECT
       s.id as score_id,
       s.project_id,
       s.comment,
@@ -92,7 +92,7 @@ router.get('/scores/:scoreId', requireJudge, (req, res) => {
   const { scoreId } = req.params;
 
   const score = db.prepare(`
-    SELECT 
+    SELECT
       s.id as score_id,
       s.judge_user_id,
       s.project_id,
@@ -145,7 +145,7 @@ router.get('/assignments', requireJudge, (req, res) => {
   const currentJudgeId = req.user.id;
 
   const assignments = db.prepare(`
-    SELECT 
+    SELECT
       ja.id as assignment_id,
       ja.project_id,
       ja.batch_id,
@@ -212,7 +212,7 @@ router.get('/assignments/:projectId', requireJudge, (req, res) => {
 
   // Fetch project details
   const project = db.prepare(`
-    SELECT 
+    SELECT
       p.id, p.title, p.summary, p.description, p.repo_url, p.demo_url,
       p.track_id, tr.name as track_name, t.name as team_name
     FROM projects p
@@ -382,6 +382,291 @@ router.post('/scores', requireJudge, (req, res) => {
   res.status(score ? 200 : 201).json({
     message: scoreStatus === 'SUBMITTED' ? 'Score submitted successfully' : 'Draft score saved',
     score_id: scoreId,
+  });
+});
+
+// =========================================================================
+// BONUS B: PAIRWISE COMPARISON JUDGE ENDPOINTS
+// =========================================================================
+
+// GET /api/judge/pairwise/assignments - List pairwise comparison pairs assigned to current judge
+router.get('/pairwise/assignments', requireJudge, (req, res) => {
+  const db = getDatabase();
+  const currentJudgeId = req.user.id;
+
+  const targetJudgeQuery =
+    req.query.judge ||
+    req.query.judge_id ||
+    req.query.judge_user_id ||
+    req.query.user_id ||
+    req.query.judgeId ||
+    req.query.userId ||
+    req.query.target ||
+    req.query.target_judge;
+
+  if (targetJudgeQuery) {
+    const resolvedTarget = resolveJudgeId(targetJudgeQuery);
+    if (resolvedTarget !== currentJudgeId && !req.user.roles.includes('organizer') && !req.user.roles.includes('admin')) {
+      return res.status(403).json({
+        error: 'Forbidden: Access to peer judge pairwise assignments is strictly prohibited',
+      });
+    }
+  }
+
+  const pairs = db.prepare(`
+    SELECT
+      pwp.id as pair_id,
+      pwp.event_id,
+      pwp.track_id,
+      pwp.status as pair_status,
+      pwp.created_at,
+      pwp.project_a_id,
+      pwp.project_b_id,
+      pa.title as project_a_title,
+      pa.summary as project_a_summary,
+      ta.name as team_a_name,
+      pb.title as project_b_title,
+      pb.summary as project_b_summary,
+      tb.name as team_b_name,
+      pwc.id as comparison_id,
+      pwc.winner_id,
+      pwc.is_tie,
+      pwc.comment
+    FROM pairwise_pairs pwp
+    JOIN projects pa ON pa.id = pwp.project_a_id
+    JOIN teams ta ON ta.id = pa.team_id
+    JOIN projects pb ON pb.id = pwp.project_b_id
+    JOIN teams tb ON tb.id = pb.team_id
+    LEFT JOIN pairwise_comparisons pwc ON pwc.pair_id = pwp.id
+    WHERE pwp.judge_user_id = ?
+    ORDER BY pwp.status ASC, pwp.created_at ASC
+  `).all(currentJudgeId);
+
+  res.json({
+    judge_id: currentJudgeId,
+    judge_name: req.user.name,
+    pairs,
+  });
+});
+
+// GET /api/judge/pairwise/assignments/:pairId - Fetch single assigned comparison pair
+router.get('/pairwise/assignments/:pairId', requireJudge, (req, res) => {
+  const db = getDatabase();
+  const currentJudgeId = req.user.id;
+  const { pairId } = req.params;
+
+  const pair = db.prepare(`
+    SELECT
+      pwp.id as pair_id,
+      pwp.judge_user_id,
+      pwp.event_id,
+      pwp.track_id,
+      pwp.status as pair_status,
+      pwp.created_at,
+      pwp.project_a_id,
+      pwp.project_b_id,
+      pa.title as project_a_title,
+      pa.summary as project_a_summary,
+      pa.description as project_a_description,
+      pa.repo_url as project_a_repo_url,
+      pa.demo_url as project_a_demo_url,
+      ta.name as team_a_name,
+      pb.title as project_b_title,
+      pb.summary as project_b_summary,
+      pb.description as project_b_description,
+      pb.repo_url as project_b_repo_url,
+      pb.demo_url as project_b_demo_url,
+      tb.name as team_b_name,
+      pwc.id as comparison_id,
+      pwc.winner_id,
+      pwc.is_tie,
+      pwc.comment
+    FROM pairwise_pairs pwp
+    JOIN projects pa ON pa.id = pwp.project_a_id
+    JOIN teams ta ON ta.id = pa.team_id
+    JOIN projects pb ON pb.id = pwp.project_b_id
+    JOIN teams tb ON tb.id = pb.team_id
+    LEFT JOIN pairwise_comparisons pwc ON pwc.pair_id = pwp.id
+    WHERE pwp.id = ?
+  `).get(pairId);
+
+  if (!pair) {
+    return res.status(404).json({ error: 'Pair assignment not found' });
+  }
+
+  // Strict ownership check
+  if (
+    pair.judge_user_id !== currentJudgeId &&
+    !req.user.roles.includes('organizer') &&
+    !req.user.roles.includes('admin')
+  ) {
+    return res.status(403).json({
+      error: 'Forbidden: Access to peer judge pairwise assignment is strictly prohibited',
+    });
+  }
+
+  res.json({ pair });
+});
+
+// POST /api/judge/pairwise/comparisons - Submit comparison for assigned pair
+router.post('/pairwise/comparisons', requireJudge, (req, res) => {
+  const db = getDatabase();
+  const currentJudgeId = req.user.id;
+  const { pair_id, winner_id, is_tie, comment = '' } = req.body;
+
+  if (!pair_id) {
+    return res.status(400).json({ error: 'pair_id is required' });
+  }
+
+  // 1. Fetch pair assignment
+  const pair = db.prepare(`
+    SELECT * FROM pairwise_pairs WHERE id = ?
+  `).get(pair_id);
+
+  if (!pair) {
+    return res.status(404).json({ error: 'Pair assignment not found' });
+  }
+
+  // 2. Strict Judge Ownership Check
+  if (pair.judge_user_id !== currentJudgeId) {
+    return res.status(403).json({
+      error: 'Forbidden: You are not assigned to evaluate this comparison pair',
+    });
+  }
+
+  // 3. Duplicate check
+  const existing = db.prepare(`
+    SELECT id FROM pairwise_comparisons WHERE pair_id = ?
+  `).get(pair_id);
+
+  if (existing) {
+    return res.status(409).json({
+      error: 'Conflict: Comparison already submitted for this pair',
+    });
+  }
+
+  // 4. Validate is_tie
+  if (is_tie !== undefined && typeof is_tie !== 'boolean' && is_tie !== 0 && is_tie !== 1) {
+    return res.status(400).json({ error: 'is_tie must be a boolean or 0/1' });
+  }
+  const isTie = is_tie === true || is_tie === 1;
+
+  // 5. Validate Winner vs Tie
+  let finalWinnerId = null;
+  if (isTie) {
+    if (winner_id !== null && winner_id !== undefined && winner_id !== '') {
+      return res.status(400).json({ error: 'Tie comparison must not specify a winner_id' });
+    }
+  } else {
+    if (!winner_id) {
+      return res.status(400).json({ error: 'Non-tie comparison requires a winner_id' });
+    }
+    if (winner_id !== pair.project_a_id && winner_id !== pair.project_b_id) {
+      return res.status(400).json({
+        error: `winner_id must be either project A (${pair.project_a_id}) or project B (${pair.project_b_id})`,
+      });
+    }
+    finalWinnerId = winner_id;
+  }
+
+  // 6. Insert Comparison
+  const comparisonId = 'pwc_' + crypto.randomBytes(6).toString('hex');
+  const now = new Date().toISOString();
+
+  try {
+    db.prepare(`
+      INSERT INTO pairwise_comparisons (
+        id, pair_id, event_id, judge_user_id, project_a_id, project_b_id, winner_id, is_tie, comment, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      comparisonId,
+      pair.id,
+      pair.event_id,
+      currentJudgeId,
+      pair.project_a_id,
+      pair.project_b_id,
+      finalWinnerId,
+      isTie ? 1 : 0,
+      comment || '',
+      now
+    );
+
+    // 7. Mark pair completed
+    db.prepare(`
+      UPDATE pairwise_pairs SET status = 'COMPLETED' WHERE id = ?
+    `).run(pair.id);
+
+    // 8. Audit log
+    db.prepare(`
+      INSERT INTO audit_logs (id, actor_user_id, action, entity_type, entity_id, details_json)
+      VALUES (?, ?, 'PAIRWISE_COMPARISON_SUBMITTED', 'pairwise_comparisons', ?, ?)
+    `).run(
+      'aud_' + crypto.randomBytes(6).toString('hex'),
+      currentJudgeId,
+      comparisonId,
+      JSON.stringify({ pair_id: pair.id, winner_id: finalWinnerId, is_tie: isTie })
+    );
+
+    res.status(201).json({
+      message: 'Comparison recorded successfully',
+      comparison_id: comparisonId,
+      pair_id: pair.id,
+    });
+  } catch (err) {
+    if (err.message && err.message.includes('UNIQUE constraint failed')) {
+      return res.status(409).json({ error: 'Conflict: Comparison already exists for this pair' });
+    }
+    return res.status(500).json({ error: 'Failed to record pairwise comparison: ' + err.message });
+  }
+});
+
+// GET /api/judge/pairwise/comparisons - Retrieve judge's own comparisons
+router.get('/pairwise/comparisons', requireJudge, (req, res) => {
+  const db = getDatabase();
+  const currentJudgeId = req.user.id;
+
+  const targetJudgeQuery =
+    req.query.judge ||
+    req.query.judge_id ||
+    req.query.judge_user_id ||
+    req.query.user_id ||
+    req.query.judgeId ||
+    req.query.userId ||
+    req.query.target ||
+    req.query.target_judge;
+
+  if (targetJudgeQuery) {
+    const resolvedTarget = resolveJudgeId(targetJudgeQuery);
+    if (resolvedTarget !== currentJudgeId && !req.user.roles.includes('organizer') && !req.user.roles.includes('admin')) {
+      return res.status(403).json({
+        error: 'Forbidden: Access to peer judge pairwise comparisons is strictly prohibited',
+      });
+    }
+  }
+
+  const comparisons = db.prepare(`
+    SELECT
+      pwc.id as comparison_id,
+      pwc.pair_id,
+      pwc.event_id,
+      pwc.project_a_id,
+      pwc.project_b_id,
+      pwc.winner_id,
+      pwc.is_tie,
+      pwc.comment,
+      pwc.created_at,
+      pa.title as project_a_title,
+      pb.title as project_b_title
+    FROM pairwise_comparisons pwc
+    JOIN projects pa ON pa.id = pwc.project_a_id
+    JOIN projects pb ON pb.id = pwc.project_b_id
+    WHERE pwc.judge_user_id = ?
+    ORDER BY pwc.created_at DESC
+  `).all(currentJudgeId);
+
+  res.json({
+    judge_id: currentJudgeId,
+    comparisons,
   });
 });
 

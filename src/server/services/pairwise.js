@@ -304,6 +304,171 @@ export function calculatePairwiseRanking(comparisons, projectIds, options = {}) 
   };
 }
 
+/**
+ * Generates balanced, track-aware pairwise assignments deterministically.
+ *
+ * Enforces:
+ * - Only eligible projects paired.
+ * - No self-pairs (project_a_id != project_b_id).
+ * - Canonical ordering (project_a_id < project_b_id).
+ * - No duplicate pairs for the same judge.
+ * - Circulant graph topologies ensuring balanced coverage targeting ~4-6 reviews.
+ * - Safe handling of small graphs (0, 1, 2 projects) with documented under-coverage rationale.
+ *
+ * @param {Array<Object|string>} projects - Projects eligible for comparison
+ * @param {Array<Object|string>} judges - Judges eligible to receive assignments
+ * @param {Object} [options]
+ * @param {number} [options.comparisonsPerProject=5] - Target comparisons per project
+ * @param {string} [options.eventId='evt_default'] - Event ID
+ * @param {string} [options.trackId=null] - Optional track ID filter
+ * @returns {{ pairs: Array<Object>, metadata: Object }}
+ */
+export function generatePairAssignments(projects, judges, options = {}) {
+  const comparisonsPerProject = Number.isInteger(options.comparisonsPerProject) && options.comparisonsPerProject > 0
+    ? options.comparisonsPerProject
+    : 5;
+  const eventId = options.eventId || 'evt_default';
+  const trackId = options.trackId || null;
+
+  // Normalize project IDs
+  const projectList = (projects || [])
+    .map(p => (typeof p === 'string' ? { id: p, track_id: trackId } : p))
+    .filter(p => p && typeof p.id === 'string' && p.id.trim().length > 0);
+
+  // Deduplicate and sort deterministically
+  const uniqueProjectMap = new Map();
+  for (const p of projectList) {
+    if (!uniqueProjectMap.has(p.id)) uniqueProjectMap.set(p.id, p);
+  }
+  const sortedProjects = [...uniqueProjectMap.values()].sort((a, b) => a.id.localeCompare(b.id));
+
+  // Normalize judge IDs
+  const judgeList = (judges || [])
+    .map(j => (typeof j === 'string' ? { id: j } : j))
+    .filter(j => j && typeof j.id === 'string' && j.id.trim().length > 0);
+
+  const uniqueJudgeMap = new Map();
+  for (const j of judgeList) {
+    if (!uniqueJudgeMap.has(j.id)) uniqueJudgeMap.set(j.id, j);
+  }
+  const sortedJudges = [...uniqueJudgeMap.values()].sort((a, b) => a.id.localeCompare(b.id));
+
+  const N = sortedProjects.length;
+  const M = sortedJudges.length;
+
+  let underCoverageReason = null;
+
+  if (N === 0) {
+    underCoverageReason = 'No eligible projects available for pairing.';
+    return { pairs: [], metadata: { projectCount: 0, judgeCount: M, underCoverageReason } };
+  }
+  if (N === 1) {
+    underCoverageReason = 'At least 2 distinct projects are required to form a comparison pair.';
+    return { pairs: [], metadata: { projectCount: 1, judgeCount: M, underCoverageReason } };
+  }
+  if (M === 0) {
+    underCoverageReason = 'No eligible judges available to assign pairs.';
+    return { pairs: [], metadata: { projectCount: N, judgeCount: 0, underCoverageReason } };
+  }
+
+  // Maximum achievable comparisons per project given N projects and M judges:
+  const maxPossibleComparisons = (N - 1) * M;
+  const targetComparisons = Math.min(comparisonsPerProject, maxPossibleComparisons);
+
+  if (targetComparisons < comparisonsPerProject) {
+    underCoverageReason = `Project count (${N}) and judge count (${M}) limit maximum comparisons per project to ${maxPossibleComparisons} (requested: ${comparisonsPerProject}).`;
+  }
+
+  // 1. Generate unique project pairs using circulant ladder steps for balanced coverage
+  const canonicalPairs = [];
+  const pairSet = new Set();
+
+  function addPair(idxA, idxB) {
+    if (idxA === idxB) return;
+    const pA = sortedProjects[idxA].id;
+    const pB = sortedProjects[idxB].id;
+    const a = pA < pB ? pA : pB;
+    const b = pA < pB ? pB : pA;
+    const key = `${a}::${b}`;
+    if (!pairSet.has(key)) {
+      pairSet.add(key);
+      canonicalPairs.push({
+        project_a_id: a,
+        project_b_id: b,
+        track_id: sortedProjects[idxA].track_id || trackId
+      });
+    }
+  }
+
+  if (N === 2) {
+    addPair(0, 1);
+  } else {
+    // Number of chords needed
+    const chords = Math.ceil(Math.min(targetComparisons, N - 1) / 2);
+    for (let s = 1; s <= chords; s++) {
+      if (s > Math.floor(N / 2)) break;
+      for (let i = 0; i < N; i++) {
+        const j = (i + s) % N;
+        addPair(i, j);
+      }
+    }
+  }
+
+  // 2. Distribute pairs to judges deterministically without duplicate assignments per judge
+  const neededAssignments = Math.ceil((N * targetComparisons) / 2);
+  const replicationsPerPair = Math.min(M, Math.max(1, Math.ceil(neededAssignments / canonicalPairs.length)));
+
+  const assignments = [];
+  const judgeAssignedPairs = new Map();
+  for (const j of sortedJudges) {
+    judgeAssignedPairs.set(j.id, new Set());
+  }
+
+  let judgeIdx = 0;
+  for (let rep = 0; rep < replicationsPerPair; rep++) {
+    for (let pIdx = 0; pIdx < canonicalPairs.length; pIdx++) {
+      if (assignments.length >= neededAssignments && rep > 0) break;
+      const pair = canonicalPairs[pIdx];
+      const pairKey = `${pair.project_a_id}::${pair.project_b_id}`;
+
+      let attempts = 0;
+      while (attempts < M) {
+        const judge = sortedJudges[judgeIdx % M];
+        judgeIdx++;
+        attempts++;
+
+        const assignedSet = judgeAssignedPairs.get(judge.id);
+        if (!assignedSet.has(pairKey)) {
+          assignedSet.add(pairKey);
+          assignments.push({
+            id: `pwp_${judge.id}_${pair.project_a_id}_${pair.project_b_id}`,
+            event_id: eventId,
+            judge_user_id: judge.id,
+            project_a_id: pair.project_a_id,
+            project_b_id: pair.project_b_id,
+            track_id: pair.track_id,
+            status: 'PENDING'
+          });
+          break;
+        }
+      }
+    }
+  }
+
+  return {
+    pairs: assignments,
+    metadata: {
+      projectCount: N,
+      judgeCount: M,
+      canonicalPairCount: canonicalPairs.length,
+      totalAssignments: assignments.length,
+      targetComparisons,
+      underCoverageReason
+    }
+  };
+}
+
 export default {
-  calculatePairwiseRanking
+  calculatePairwiseRanking,
+  generatePairAssignments
 };
