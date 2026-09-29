@@ -111,13 +111,110 @@ This guarantees 100% reproducible rankings across every platform execution.
 
 ---
 
-## 4. Normalization Impact on Real Fixture Data
+## 4. Fixture Data Normalization Proof
 
-When evaluated against the 41 fixture projects and 126 scores:
-- **Top Ranked Project:** `prj_35` (Final Score: 4.4172, 5 reviews).
-- **Projects with Varied Review Counts:** Projects with 2 reviews are stabilized against projects with 5 reviews, rewarding consistent excellence across multiple reviewers.
-- **Harsh Judges:** Projects rated 3.0 by an exceptionally harsh judge (e.g. `jdg_14` mean 3.0) receive a positive Z-score boost, elevating their standing.
-- **Generous Judges:** Projects rated 4.0 by an exceptionally lenient judge (e.g. `jdg_02` mean 4.22) are appropriately scaled down.
+This section provides the complete, mathematically grounded proof demonstrating the normalization engine operating across the canonical `fixtures.json` dataset (**41 projects, 30 judges, 126 evaluations**).
+
+### 4.1. Core Concepts & Definitions
+
+1. **Raw Ranking (`Rank Before`):**
+   - The project's position sorted strictly by its raw unadjusted evaluation average:
+     $$\text{RawScore}_p = \frac{1}{K_p} \sum_{j=1}^{K_p} R_{j,p}$$
+   - When raw averages tie, projects are ordered deterministically by `project_id` ascending.
+2. **Normalized Ranking (`Rank After`):**
+   - The project's position sorted by its regularized Bayesian shrinkage final score:
+     $$\text{FinalScore}_p = \frac{\sum_{j=1}^{K_p} S_{j,p} + k_0 \cdot \mu_{\text{global}}}{K_p + k_0}$$
+   - Followed by `raw_avg_score` descending and `project_id` ascending as deterministic tiebreakers.
+3. **Rank Delta Convention:**
+   - $\text{Delta} = \text{Rank Before} - \text{Rank After}$
+   - **Positive ($>0$):** Project moved **upward** (closer to 1st place) after compensating for harsh reviewers or recognizing consistent high marks across larger sample sizes.
+   - **Negative ($<0$):** Project moved **downward** after correcting for overly lenient judges or discounting small, noisy sample sizes.
+   - **Zero ($0$):** Project ranking remained identical.
+
+### 4.2. Mathematical Correction of Real-World Distortions
+
+- **Judge Severity Correction:**
+  In the fixture set, judge means vary significantly (e.g., `jdg_14` mean $\approx 3.0$ vs. `jdg_02` mean $\approx 4.22$). Unadjusted scores artificially penalize projects evaluated by harsh judges and unfairly reward projects reviewed by lenient judges. By centering evaluations around judge-specific means ($Z_{j,p} = (R_{j,p} - \mu_j) / \sigma_{j,\text{reg}}$), the engine isolates intrinsic project merit from judge personality.
+- **Incomplete Batches & Sample-Size Shrinkage:**
+  Projects receive between $2$ and $5$ reviews ($K_p \in [2, 5]$). A naive average would let a project with only 2 lucky scores outrank a project with 5 thorough evaluations. Applying Bayesian shrinkage toward $\mu_{\text{global}}$ with prior weight $k_0 = 1.0$ appropriately pulls small-sample scores toward the population mean until verified by additional reviewers.
+- **Zero-Variance Resilience (`jdg_07`):**
+  Judge `jdg_07` assigned $4.0$ to all 3 evaluated projects ($s_j^2 = 0$). Empirical Bayes variance regularization ($m = 2.0$) guarantees $\sigma_{j,\text{reg}} = 0.4099 > 0$, eliminating division-by-zero crashes while neutrally weighting zero-information evaluations ($Z = 0.0$).
+- **Single-Review Resilience (`jdg_01`, `jdg_23`):**
+  Judges with only 1 evaluation ($N_j = 1$) have sample variance $s_j = 0$ by definition. The prior regularization smoothly establishes $\sigma_{j,\text{reg}} \approx 0.5292 > 0$ with zero NaN artifacts.
+- **Deterministic Tie-Breaking:**
+  All evaluations and rankings are deterministic: `final_score` DESC $\to$ `raw_avg_score` DESC $\to$ `project_id` ASC. Multi-run executions produce 100% identical rankings.
+
+### 4.3. Fixture Summary Statistics
+
+- **Total Evaluated Projects:** 41
+- **Total Ingested Judges:** 30
+- **Total Evaluations:** 126
+- **Global Score Mean ($\mu_{\text{global}}$):** 3.5661
+- **Global Score StdDev ($\sigma_{\text{global}}$):** 0.6483
+- **Review Count Range:** 2 to 5 reviews per project
+- **Single-Review Judges:** `jdg_01`, `jdg_23` (2 judges; regularized variance strictly $>0$)
+- **Zero-Variance Judges:** `jdg_07` (1 judge; regularized variance strictly $>0$)
+- **Projects Changing Rank:** 40 / 41 projects (97.6%)
+- **Largest Upward Move:** `prj_07` ("Dry Harbour"): **+22 positions** (Rank 31 $\to$ Rank 9, Raw 3.3333 $\to$ Normalized 3.6909; rewarded for consistent performance across 5 reviews evaluated by tough judges).
+- **Largest Downward Move:** `prj_19` ("Small Relay"): **-15 positions** (Rank 14 $\to$ Rank 29, Raw 3.6667 $\to$ Normalized 3.4766; discounted due to lenient reviewers and low review count $K_p = 2$).
+- **Top Project Before Normalization:** `prj_11` ("Salt Ledger", Raw Score 4.3333)
+- **Top Project After Normalization:** `prj_34` ("Iron Switch", Final Score 4.1515)
+
+### 4.4. Complete 41-Project Normalization Proof Table
+
+| Rank Before | Rank After | Delta | Project ID | Project Title | Track | Reviews | Raw Score | Normalized Score |
+|---|---|---|---|---|---|---|---|---|
+| 2 | 1 | +1 | prj_34 | Iron Switch | Open hardware | 3 | 4.3333 | 4.1515 |
+| 7 | 2 | +5 | prj_33 | Slow Trail | Developer tools | 3 | 4.0000 | 3.9939 |
+| 1 | 3 | -2 | prj_11 | Salt Ledger | Data and analytics | 4 | 4.3333 | 3.9839 |
+| 5 | 4 | +1 | prj_37 | Salt Loom | Education | 4 | 4.0833 | 3.9683 |
+| 6 | 5 | +1 | prj_16 | Salt Kiln | Security | 3 | 4.0000 | 3.8689 |
+| 4 | 6 | -2 | prj_25 | Dry Relay | Data and analytics | 3 | 4.1111 | 3.8560 |
+| 3 | 7 | -4 | prj_10 | Still Beacon | Open hardware | 2 | 4.1667 | 3.8186 |
+| 9 | 8 | +1 | prj_41 | Dry Harbour | Accessibility | 4 | 3.8333 | 3.7840 |
+| 31 | 9 | +22 | prj_07 | Dry Harbour | Accessibility | 5 | 3.3333 | 3.6909 |
+| 10 | 10 | 0 | prj_08 | North Drift | Security | 5 | 3.8000 | 3.6730 |
+| 8 | 11 | -3 | prj_21 | Copper Kiln | Data and analytics | 3 | 3.8889 | 3.6659 |
+| 11 | 12 | -1 | prj_04 | Green Switch | Education | 3 | 3.7778 | 3.6564 |
+| 17 | 13 | +4 | prj_09 | Hollow Signal | Health | 3 | 3.5556 | 3.6359 |
+| 21 | 14 | +7 | prj_24 | Glass Beacon | Accessibility | 2 | 3.5000 | 3.6297 |
+| 19 | 15 | +4 | prj_31 | Salt Ferry | Developer tools | 3 | 3.5556 | 3.6166 |
+| 15 | 16 | -1 | prj_36 | Salt Drift | Open hardware | 3 | 3.6667 | 3.6124 |
+| 13 | 17 | -4 | prj_15 | Copper Orbit | Security | 2 | 3.6667 | 3.6122 |
+| 25 | 18 | +7 | prj_12 | Open Beacon | Education | 3 | 3.4444 | 3.6089 |
+| 18 | 19 | -1 | prj_17 | Small Loom | Health | 3 | 3.5556 | 3.6038 |
+| 12 | 20 | -8 | prj_38 | Deep Beacon | Data and analytics | 3 | 3.7778 | 3.5949 |
+| 24 | 21 | +3 | prj_01 | Glass Signal | Security | 3 | 3.4444 | 3.5752 |
+| 20 | 22 | -2 | prj_18 | Open Kiln | Education | 2 | 3.5000 | 3.5683 |
+| 26 | 23 | +3 | prj_27 | Flat Thread | Open hardware | 3 | 3.4444 | 3.5582 |
+| 29 | 24 | +5 | prj_14 | Green Lantern | Education | 5 | 3.4000 | 3.5290 |
+| 33 | 25 | +8 | prj_29 | Flat Relay | Developer tools | 2 | 3.3333 | 3.5273 |
+| 16 | 26 | -10 | prj_02 | Small Meadow | Accessibility | 3 | 3.5556 | 3.5244 |
+| 22 | 27 | -5 | prj_39 | Paper Anchor | Accessibility | 2 | 3.5000 | 3.5184 |
+| 23 | 28 | -5 | prj_35 | Warm Beacon | Climate | 5 | 3.4667 | 3.4925 |
+| 14 | 29 | -15 | prj_19 | Small Relay | Health | 2 | 3.6667 | 3.4766 |
+| 28 | 30 | -2 | prj_32 | Loud Ledger | Developer tools | 3 | 3.4444 | 3.4685 |
+| 30 | 31 | -1 | prj_03 | Deep Compass | Accessibility | 3 | 3.3333 | 3.4094 |
+| 38 | 32 | +6 | prj_30 | Paper Harbour | Education | 3 | 3.1111 | 3.3853 |
+| 32 | 33 | -1 | prj_13 | Quiet Anchor | Climate | 3 | 3.3333 | 3.3839 |
+| 35 | 34 | +1 | prj_26 | Amber Hours | Climate | 3 | 3.2222 | 3.3672 |
+| 37 | 35 | +2 | prj_22 | Dry Bridge | Security | 3 | 3.1111 | 3.3002 |
+| 34 | 36 | -2 | prj_20 | Paper Thread | Open hardware | 3 | 3.2222 | 3.2638 |
+| 36 | 37 | -1 | prj_06 | Dry Compass | Developer tools | 3 | 3.1111 | 3.2004 |
+| 39 | 38 | +1 | prj_40 | Slow Loom | Developer tools | 2 | 3.0000 | 3.1561 |
+| 27 | 39 | -12 | prj_28 | Flat Meadow | Data and analytics | 3 | 3.4444 | 3.1541 |
+| 41 | 40 | +1 | prj_23 | Slow Quarry | Open hardware | 3 | 2.8889 | 3.0404 |
+| 40 | 41 | -1 | prj_05 | North Compass | Data and analytics | 3 | 2.8889 | 2.9118 |
+
+### 4.5. Reproducibility & Independent Verification
+
+The full proof is verified deterministically on any machine using:
+
+```bash
+node scripts/normalization-proof.js
+```
+
+The script executes directly against `fixtures.json` using the production normalization engine (`src/server/services/normalization.js`), performs programmatic assertion checks on row counts, uniqueness, and non-NaN scores, and exits with return code `0` on success.
 
 ---
 
