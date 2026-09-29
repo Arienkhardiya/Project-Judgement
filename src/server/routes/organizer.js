@@ -304,7 +304,7 @@ router.post('/judges/invite', requireOrganizer, async (req, res) => {
   if (emailDelivered) {
     message = `Invitation sent via email to ${cleanEmail}.`;
   } else if (emailConfigured) {
-    message = `Invitation created. Email delivery could not be sent (${emailError || 'SMTP error'}).`;
+    message = `Invitation created. Email delivery could not be sent (${emailError || 'Email delivery error'}).`;
   } else {
     message = `Invitation created. Email delivery is not configured on this host.`;
   }
@@ -330,21 +330,24 @@ router.post('/judges/invite', requireOrganizer, async (req, res) => {
   });
 });
 
-// GET /api/organizer/smtp-diagnostics - Check SMTP configuration and optional test connection
-router.get('/smtp-diagnostics', requireOrganizer, async (req, res) => {
+// GET /api/organizer/email-diagnostics & GET /api/organizer/smtp-diagnostics - Check email configuration and optional test connection
+const handleEmailDiagnostics = async (req, res) => {
   const diag = emailService.getDiagnostics();
   let testResult = null;
   if (req.query.test === 'true' && diag.configured) {
     const override = {};
     if (req.query.port) override.port = Number(req.query.port);
     if (req.query.secure !== undefined) override.secure = req.query.secure === 'true';
+    if (req.query.apiKey) override.apiKey = req.query.apiKey;
     testResult = await emailService.testConnection(override);
   }
   res.json({
     diagnostics: diag,
     testResult,
   });
-});
+};
+router.get('/smtp-diagnostics', requireOrganizer, handleEmailDiagnostics);
+router.get('/email-diagnostics', requireOrganizer, handleEmailDiagnostics);
 
 // GET /api/organizer/invitations - List event invitations
 router.get('/invitations', requireOrganizer, (req, res) => {

@@ -450,7 +450,7 @@ export default function OrganizerPortal({ user, onCreateNewEvent, initialEventId
       if (data.emailDelivered) {
         msg = `Invitation successfully dispatched via email to ${judgeName} (${judgeEmail}).`;
       } else if (data.emailConfigured) {
-        msg = `Judge onboarding credentials generated. Email delivery could not be sent (${data.emailError || 'SMTP error'}). Direct link is ready to copy below.`;
+        msg = `Judge onboarding credentials generated. Email delivery could not be sent (${data.emailError || 'Delivery error'}). Direct link is ready to copy below.`;
       } else {
         msg = `Judge onboarding credentials generated. Email delivery is offline; direct link is ready to copy below.`;
       }
@@ -1055,7 +1055,7 @@ export default function OrganizerPortal({ user, onCreateNewEvent, initialEventId
                       {lastInvite.emailDelivered
                         ? '✓ Email Dispatched & Link Ready'
                         : (lastInvite.emailConfigured
-                            ? `⚠️ Send Failed (${lastInvite.emailError || 'SMTP Error'}) — Direct Link Ready`
+                            ? `⚠️ Send Failed (${lastInvite.emailError || 'Delivery Error'}) — Direct Link Ready`
                             : '📋 Direct Link Ready (Email Offline)')}
                     </span>
                     <span style={{ fontSize: '0.72rem', color: 'var(--text-dim)' }}>

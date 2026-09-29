@@ -134,7 +134,7 @@ router.post('/register', async (req, res) => {
   if (emailDelivered) {
     message = 'Account created. Verification email sent.';
   } else if (emailConfigured) {
-    message = `Account created. Verification email could not be sent (${emailError || 'SMTP error'}).`;
+    message = `Account created. Verification email could not be sent (${emailError || 'Email delivery error'}).`;
   } else {
     message = 'Account created. Verification link generated (email delivery not configured).';
   }
@@ -247,7 +247,7 @@ router.post('/resend-verification', async (req, res) => {
   if (emailDelivered) {
     message = 'Verification email sent.';
   } else if (emailConfigured) {
-    message = `Verification email could not be sent (${emailError || 'SMTP error'}).`;
+    message = `Verification email could not be sent (${emailError || 'Email delivery error'}).`;
   } else {
     message = 'Verification link generated (email delivery not configured).';
   }

@@ -139,7 +139,7 @@ export default function LoginModal({ isOpen, onClose, onLoginSuccess, isDemoMode
 
       if (data.resetToken) {
         const text = data.emailConfigured
-          ? `⚠️ Reset email could not be sent (${data.emailError || 'SMTP error'}). Use the direct token below to reset your password:`
+          ? `⚠️ Reset email could not be sent (${data.emailError || 'Email delivery failed'}). Use the direct token below to reset your password:`
           : 'Email delivery is not configured on this host. Use the direct token below to reset your password:';
         setInfo({
           text,
@@ -410,7 +410,7 @@ export default function LoginModal({ isOpen, onClose, onLoginSuccess, isDemoMode
             ) : verificationState.configured ? (
               <div style={{ background: 'rgba(255, 180, 0, 0.05)', border: '1px solid rgba(255, 180, 0, 0.3)', borderRadius: '10px', padding: '1.25rem', marginBottom: '1.5rem' }}>
                 <div style={{ fontSize: '0.82rem', color: '#f59e0b', marginBottom: '0.75rem', lineHeight: '1.4' }}>
-                  ⚠️ <em>Verification email could not be sent ({verificationState.error || 'SMTP delivery issue'}). You can verify your account directly:</em>
+                  ⚠️ <em>Verification email could not be sent ({verificationState.error || 'Email delivery failed'}). You can verify your account directly:</em>
                 </div>
                 <button
                   type="button"
