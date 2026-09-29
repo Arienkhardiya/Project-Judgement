@@ -221,6 +221,36 @@ CREATE TABLE IF NOT EXISTS webhook_deliveries (
   delivered_at TEXT NOT NULL DEFAULT (datetime('now', 'utc'))
 );
 
+-- Bonus B: Pairwise Comparison Mode Foundation (Additive)
+CREATE TABLE IF NOT EXISTS pairwise_pairs (
+  id TEXT PRIMARY KEY,
+  event_id TEXT NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+  judge_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  project_a_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  project_b_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  track_id TEXT REFERENCES tracks(id) ON DELETE SET NULL,
+  status TEXT NOT NULL DEFAULT 'PENDING' CHECK(status IN ('PENDING', 'COMPLETED')),
+  created_at TEXT NOT NULL DEFAULT (datetime('now', 'utc')),
+  CHECK(project_a_id < project_b_id),
+  UNIQUE(judge_user_id, project_a_id, project_b_id)
+);
+
+CREATE TABLE IF NOT EXISTS pairwise_comparisons (
+  id TEXT PRIMARY KEY,
+  pair_id TEXT REFERENCES pairwise_pairs(id) ON DELETE SET NULL,
+  event_id TEXT NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+  judge_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  project_a_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  project_b_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  winner_id TEXT REFERENCES projects(id) ON DELETE CASCADE,
+  is_tie INTEGER NOT NULL DEFAULT 0 CHECK(is_tie IN (0, 1)),
+  comment TEXT DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT (datetime('now', 'utc')),
+  CHECK(project_a_id < project_b_id),
+  CHECK((is_tie = 1 AND winner_id IS NULL) OR (is_tie = 0 AND winner_id IS NOT NULL AND (winner_id = project_a_id OR winner_id = project_b_id))),
+  UNIQUE(judge_user_id, project_a_id, project_b_id)
+);
+
 -- Indexes for high performance and fast querying
 CREATE INDEX IF NOT EXISTS idx_sessions_token ON sessions(token);
 CREATE INDEX IF NOT EXISTS idx_projects_track ON projects(track_id);
@@ -236,4 +266,8 @@ CREATE INDEX IF NOT EXISTS idx_votes_voter ON votes(voter_user_id);
 CREATE INDEX IF NOT EXISTS idx_comments_project ON project_comments(project_id);
 CREATE INDEX IF NOT EXISTS idx_verifiable_records_signature ON verifiable_records(signature);
 CREATE INDEX IF NOT EXISTS idx_webhooks_event ON webhooks(event_id);
-
+CREATE INDEX IF NOT EXISTS idx_pairwise_pairs_judge ON pairwise_pairs(judge_user_id);
+CREATE INDEX IF NOT EXISTS idx_pairwise_pairs_event ON pairwise_pairs(event_id);
+CREATE INDEX IF NOT EXISTS idx_pairwise_comparisons_judge ON pairwise_comparisons(judge_user_id);
+CREATE INDEX IF NOT EXISTS idx_pairwise_comparisons_event ON pairwise_comparisons(event_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_pairwise_comparisons_pair_id ON pairwise_comparisons(pair_id) WHERE pair_id IS NOT NULL;
