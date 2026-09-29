@@ -16,6 +16,7 @@ import votingRoutes from './routes/voting.js';
 import commentRoutes from './routes/comments.js';
 import verificationRoutes from './routes/verification.js';
 import webhookRoutes from './routes/webhooks.js';
+import invitationsRoutes from './routes/invitations.js';
 import { getDatabase } from './db/database.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -57,6 +58,7 @@ export function createApp() {
   app.use('/api/comments', commentRoutes);
   app.use('/api/verify', verificationRoutes);
   app.use('/api/webhooks', webhookRoutes);
+  app.use('/api/invitations', invitationsRoutes);
   app.use('/', projectRoutes); // Mounts /projects/new, /api/projects, etc.
 
   // GET /embed/gallery - Embeddable lightweight widget (T4)
@@ -372,6 +374,15 @@ export function createApp() {
     const html = renderGalleryHtml(projects, tracks, track, q);
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
     res.status(200).send(html);
+  });
+
+  // SPA Deep Link Handler for Invitations, Verifications, and Password Resets
+  app.get(['/invite/judge/:token', '/verify-email', '/reset-password'], (req, res) => {
+    const distIndexPath = path.resolve(process.cwd(), 'dist', 'index.html');
+    if (fs.existsSync(distIndexPath)) {
+      return res.sendFile(distIndexPath);
+    }
+    res.redirect('/projects');
   });
 
   // GET / - Redirect to /projects

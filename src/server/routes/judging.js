@@ -234,8 +234,10 @@ router.get('/assignments/:projectId', requireJudge, (req, res) => {
     for (const v of vals) criteriaScores[v.criterion_key] = v.value;
   }
 
-  // Fetch active rubric
-  const rubric = db.prepare(`SELECT id, name FROM rubrics ORDER BY id ASC LIMIT 1`).get();
+  // Fetch active rubric for event
+  const projEvent = db.prepare(`SELECT t.event_id FROM projects p JOIN teams t ON t.id = p.team_id WHERE p.id = ?`).get(projectId);
+  let rubric = projEvent ? db.prepare(`SELECT id, name FROM rubrics WHERE event_id = ? LIMIT 1`).get(projEvent.event_id) : null;
+  if (!rubric) rubric = db.prepare(`SELECT id, name FROM rubrics ORDER BY id ASC LIMIT 1`).get();
   const criteria = rubric ? db.prepare(`
     SELECT criterion_key, name, description, weight, min_score, max_score
     FROM rubric_criteria
@@ -273,7 +275,14 @@ router.post('/scores', requireJudge, (req, res) => {
   }
 
   // 2. Fetch Active Rubric and Validate Criteria Values
-  const rubric = db.prepare(`SELECT id FROM rubrics ORDER BY id ASC LIMIT 1`).get();
+  const projectEvent = db.prepare(`
+    SELECT t.event_id FROM projects p JOIN teams t ON t.id = p.team_id WHERE p.id = ?
+  `).get(project_id);
+
+  let rubric = projectEvent ? db.prepare('SELECT id FROM rubrics WHERE event_id = ? LIMIT 1').get(projectEvent.event_id) : null;
+  if (!rubric) {
+    rubric = db.prepare(`SELECT id FROM rubrics ORDER BY id ASC LIMIT 1`).get();
+  }
   if (!rubric) {
     return res.status(500).json({ error: 'No active rubric configured for event' });
   }

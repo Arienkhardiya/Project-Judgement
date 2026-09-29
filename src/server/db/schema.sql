@@ -9,7 +9,12 @@ CREATE TABLE IF NOT EXISTS events (
   start_time TEXT,
   end_time TEXT,
   submissions_close TEXT NOT NULL, -- ISO 8601 UTC
-  created_at TEXT NOT NULL DEFAULT (datetime('now', 'utc'))
+  created_at TEXT NOT NULL DEFAULT (datetime('now', 'utc')),
+  organizer_id TEXT REFERENCES users(id),
+  slug TEXT UNIQUE,
+  status TEXT NOT NULL DEFAULT 'PUBLISHED',
+  judging_mode TEXT DEFAULT 'BOTH',
+  results_published INTEGER NOT NULL DEFAULT 0
 );
 
 -- Tracks
@@ -36,7 +41,12 @@ CREATE TABLE IF NOT EXISTS users (
   email TEXT UNIQUE NOT NULL,
   name TEXT NOT NULL,
   password_hash TEXT NOT NULL,
-  created_at TEXT NOT NULL DEFAULT (datetime('now', 'utc'))
+  created_at TEXT NOT NULL DEFAULT (datetime('now', 'utc')),
+  is_verified INTEGER NOT NULL DEFAULT 0,
+  verification_token TEXT,
+  verification_token_expires_at TEXT,
+  reset_token TEXT,
+  reset_token_expires_at TEXT
 );
 
 CREATE TABLE IF NOT EXISTS roles (
@@ -251,6 +261,32 @@ CREATE TABLE IF NOT EXISTS pairwise_comparisons (
   UNIQUE(judge_user_id, project_a_id, project_b_id)
 );
 
+-- Real-World Event Registrations (Participant Flow)
+CREATE TABLE IF NOT EXISTS event_registrations (
+  id TEXT PRIMARY KEY,
+  event_id TEXT NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at TEXT NOT NULL DEFAULT (datetime('now', 'utc')),
+  UNIQUE(event_id, user_id)
+);
+
+-- Real-World Judge & Team Invitations
+CREATE TABLE IF NOT EXISTS event_invitations (
+  id TEXT PRIMARY KEY,
+  event_id TEXT NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+  email TEXT NOT NULL,
+  name TEXT NOT NULL,
+  role TEXT NOT NULL DEFAULT 'judge' CHECK(role IN ('judge', 'participant')),
+  token TEXT UNIQUE NOT NULL,
+  status TEXT NOT NULL DEFAULT 'PENDING' CHECK(status IN ('PENDING', 'ACCEPTED', 'EXPIRED', 'REVOKED')),
+  track_ids_json TEXT,
+  created_by_user_id TEXT REFERENCES users(id),
+  created_at TEXT NOT NULL DEFAULT (datetime('now', 'utc')),
+  expires_at TEXT NOT NULL,
+  accepted_at TEXT,
+  accepted_by_user_id TEXT REFERENCES users(id)
+);
+
 -- Indexes for high performance and fast querying
 CREATE INDEX IF NOT EXISTS idx_sessions_token ON sessions(token);
 CREATE INDEX IF NOT EXISTS idx_projects_track ON projects(track_id);
@@ -271,3 +307,8 @@ CREATE INDEX IF NOT EXISTS idx_pairwise_pairs_event ON pairwise_pairs(event_id);
 CREATE INDEX IF NOT EXISTS idx_pairwise_comparisons_judge ON pairwise_comparisons(judge_user_id);
 CREATE INDEX IF NOT EXISTS idx_pairwise_comparisons_event ON pairwise_comparisons(event_id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_pairwise_comparisons_pair_id ON pairwise_comparisons(pair_id) WHERE pair_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_event_registrations_user ON event_registrations(user_id);
+CREATE INDEX IF NOT EXISTS idx_event_registrations_event ON event_registrations(event_id);
+CREATE INDEX IF NOT EXISTS idx_event_invitations_token ON event_invitations(token);
+CREATE INDEX IF NOT EXISTS idx_event_invitations_event ON event_invitations(event_id);
+CREATE INDEX IF NOT EXISTS idx_event_invitations_email ON event_invitations(email);

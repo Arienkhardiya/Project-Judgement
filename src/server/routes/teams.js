@@ -8,14 +8,22 @@ const router = express.Router();
 // GET /api/teams/my-team - Get current user's team and teammates
 router.get('/my-team', requireAuth, (req, res) => {
   const db = getDatabase();
+  const eventId = req.query.event_id;
 
-  const membership = db.prepare(`
+  let query = `
     SELECT tm.team_id, tm.role, t.name as team_name, t.invite_code, t.event_id, e.name as event_name, e.submissions_close
     FROM team_members tm
     JOIN teams t ON t.id = tm.team_id
     JOIN events e ON e.id = t.event_id
     WHERE tm.user_id = ?
-  `).get(req.user.id);
+  `;
+  const params = [req.user.id];
+  if (eventId) {
+    query += ' AND t.event_id = ?';
+    params.push(eventId);
+  }
+  query += ' ORDER BY tm.created_at DESC LIMIT 1';
+  const membership = db.prepare(query).get(...params);
 
   if (!membership) {
     return res.json({ team: null });

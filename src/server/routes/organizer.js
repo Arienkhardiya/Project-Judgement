@@ -6,6 +6,7 @@ import { calculateNormalization } from '../services/normalization.js';
 import { generateResultsCsv } from '../services/csv.js';
 import { exportEventData, importEventData } from '../services/bulk.js';
 import { calculatePairwiseRanking, generatePairAssignments } from '../services/pairwise.js';
+import { emailService } from '../services/email.js';
 
 const router = express.Router();
 
@@ -18,11 +19,33 @@ router.get('/dashboard', requireOrganizer, (req, res) => {
   const db = getDatabase();
   const eventId = req.query.event_id;
   const event = eventId
-    ? db.prepare('SELECT id, name FROM events WHERE id = ?').get(eventId)
-    : db.prepare('SELECT id, name FROM events ORDER BY created_at DESC LIMIT 1').get();
+    ? db.prepare(`
+        SELECT id, name, description, start_time, end_time, submissions_close,
+               organizer_id, slug, COALESCE(status, 'PUBLISHED') as status,
+               COALESCE(judging_mode, 'BOTH') as judging_mode,
+               COALESCE(results_published, 0) as results_published
+        FROM events WHERE id = ?
+      `).get(eventId)
+    : db.prepare(`
+        SELECT id, name, description, start_time, end_time, submissions_close,
+               organizer_id, slug, COALESCE(status, 'PUBLISHED') as status,
+               COALESCE(judging_mode, 'BOTH') as judging_mode,
+               COALESCE(results_published, 0) as results_published
+        FROM events ORDER BY created_at DESC LIMIT 1
+      `).get();
   if (!event) return res.status(404).json({ error: 'No event found' });
 
-  // 1. Overall Assignment Stats
+  // 1. Overall Lifecycle Stats
+  const lifecycle = db.prepare(`
+    SELECT
+      (SELECT COUNT(*) FROM teams WHERE event_id = ?) as total_teams,
+      (SELECT COUNT(DISTINCT tm.user_id) FROM team_members tm JOIN teams t ON t.id = tm.team_id WHERE t.event_id = ?) as total_participants,
+      (SELECT COUNT(*) FROM projects p JOIN teams t ON t.id = p.team_id WHERE t.event_id = ?) as total_projects,
+      (SELECT COUNT(*) FROM projects p JOIN teams t ON t.id = p.team_id WHERE t.event_id = ? AND p.status = 'SUBMITTED') as submitted_projects,
+      (SELECT COUNT(*) FROM projects p JOIN teams t ON t.id = p.team_id WHERE t.event_id = ? AND p.status = 'DRAFT') as draft_projects
+  `).get(event.id, event.id, event.id, event.id, event.id);
+
+  // 2. Overall Assignment Stats
   const totals = db.prepare(`
     SELECT
       COUNT(*) as total_assignments,
@@ -82,6 +105,13 @@ router.get('/dashboard', requireOrganizer, (req, res) => {
 
   res.json({
     event,
+    lifecycle: {
+      total_teams: lifecycle.total_teams || 0,
+      total_participants: lifecycle.total_participants || 0,
+      total_projects: lifecycle.total_projects || 0,
+      submitted_projects: lifecycle.submitted_projects || 0,
+      draft_projects: lifecycle.draft_projects || 0,
+    },
     totals: {
       total: totals.total_assignments || 0,
       not_started: totals.not_started || 0,
@@ -189,25 +219,36 @@ router.get('/audit', requireOrganizer, (req, res) => {
   res.json({ logs });
 });
 
-// POST /api/organizer/judges/invite - Invite a new judge
-router.post('/judges/invite', requireOrganizer, (req, res) => {
-  const { email, name, track_ids = [] } = req.body;
+// POST /api/organizer/judges/invite - Invite a new judge with real invitation record & email delivery
+router.post('/judges/invite', requireOrganizer, async (req, res) => {
+  const { email, name, track_ids = [], event_id } = req.body;
   if (!email || !name) {
     return res.status(400).json({ error: 'Email and name are required' });
   }
 
   const db = getDatabase();
+  const cleanEmail = email.trim().toLowerCase();
+
+  // Determine target event
+  let targetEventId = event_id;
+  if (!targetEventId) {
+    const defaultEvt = db.prepare('SELECT id, name FROM events ORDER BY created_at DESC LIMIT 1').get();
+    targetEventId = defaultEvt ? defaultEvt.id : 'evt_01';
+  }
+  const event = db.prepare('SELECT id, name FROM events WHERE id = ?').get(targetEventId);
+  const eventName = event ? event.name : 'Hackathon';
+
   const judgeId = 'jdg_' + crypto.randomBytes(4).toString('hex');
   const tempPasswordHash = hashPassword('judge123');
 
   // Insert or update user with judge role
   db.prepare(`
-    INSERT INTO users (id, email, name, password_hash)
-    VALUES (?, ?, ?, ?)
+    INSERT INTO users (id, email, name, password_hash, is_verified)
+    VALUES (?, ?, ?, ?, 1)
     ON CONFLICT(email) DO UPDATE SET name = excluded.name
-  `).run(judgeId, email.trim().toLowerCase(), name.trim(), tempPasswordHash);
+  `).run(judgeId, cleanEmail, name.trim(), tempPasswordHash);
 
-  const existingUser = db.prepare('SELECT id FROM users WHERE email = ?').get(email.trim().toLowerCase());
+  const existingUser = db.prepare('SELECT id FROM users WHERE email = ?').get(cleanEmail);
   const actualUserId = existingUser ? existingUser.id : judgeId;
 
   db.prepare(`INSERT OR IGNORE INTO user_roles (user_id, role_id) VALUES (?, 'judge')`).run(actualUserId);
@@ -220,16 +261,80 @@ router.post('/judges/invite', requireOrganizer, (req, res) => {
     }
   }
 
+  // Create real event_invitations record
+  const invitationId = 'inv_' + crypto.randomBytes(6).toString('hex');
+  const token = 'tok_' + crypto.randomBytes(16).toString('hex');
+  const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(); // 7 days
+
+  db.prepare(`
+    INSERT INTO event_invitations (id, event_id, email, name, role, token, status, track_ids_json, created_by_user_id, expires_at)
+    VALUES (?, ?, ?, ?, 'judge', ?, 'PENDING', ?, ?, ?)
+  `).run(invitationId, targetEventId, cleanEmail, name.trim(), token, JSON.stringify(track_ids), req.user.id, expiresAt);
+
   // Audit log
   db.prepare(`
     INSERT INTO audit_logs (id, actor_user_id, action, entity_type, entity_id, details_json)
     VALUES (?, ?, 'JUDGE_INVITED', 'users', ?, ?)
-  `).run('aud_' + crypto.randomBytes(6).toString('hex'), req.user.id, actualUserId, JSON.stringify({ email, track_ids }));
+  `).run('aud_' + crypto.randomBytes(6).toString('hex'), req.user.id, actualUserId, JSON.stringify({ email: cleanEmail, track_ids, event_id: targetEventId, invitation_id: invitationId }));
+
+  const baseUrl = `${req.protocol}://${req.get('host') || 'localhost:8080'}`;
+  let emailDelivered = false;
+  let inviteLink = `/invite/judge/${token}`;
+
+  try {
+    const emailResult = await emailService.sendJudgeInvitationEmail({
+      email: cleanEmail,
+      name: name.trim(),
+      eventName,
+      token,
+      baseUrl,
+    });
+    emailDelivered = emailResult.success;
+    if (emailResult.inviteUrl) inviteLink = emailResult.inviteUrl;
+  } catch (err) {}
 
   res.status(201).json({
-    message: `Judge ${name} invited successfully`,
-    judge: { id: actualUserId, email, name, track_ids },
+    message: emailDelivered
+      ? `Invitation sent via email to ${cleanEmail}.`
+      : `Invitation created. Email delivery is not configured.`,
+    emailDelivered,
+    inviteLink,
+    token,
+    invitation: {
+      id: invitationId,
+      token,
+      email: cleanEmail,
+      name: name.trim(),
+      event_id: targetEventId,
+      expires_at: expiresAt,
+      status: 'PENDING',
+    },
+    defaultPassword: 'judge123',
+    judge: { id: actualUserId, email: cleanEmail, name: name.trim(), track_ids },
   });
+});
+
+// GET /api/organizer/invitations - List event invitations
+router.get('/invitations', requireOrganizer, (req, res) => {
+  const db = getDatabase();
+  const eventId = req.query.event_id;
+  let query = `
+    SELECT
+      i.id, i.event_id, i.email, i.name, i.role, i.token, i.status,
+      i.track_ids_json, i.expires_at, i.created_at, i.accepted_at,
+      u.name as accepted_by_name
+    FROM event_invitations i
+    LEFT JOIN users u ON u.id = i.accepted_by_user_id
+    WHERE 1=1
+  `;
+  const params = [];
+  if (eventId) {
+    query += ` AND i.event_id = ?`;
+    params.push(eventId);
+  }
+  query += ` ORDER BY i.created_at DESC`;
+  const invitations = db.prepare(query).all(...params);
+  res.json({ invitations });
 });
 
 // GET /api/organizer/judges - List all judges and tracks
@@ -298,10 +403,12 @@ router.post('/assignments', requireOrganizer, (req, res) => {
 
 // POST /api/organizer/assignments/auto - Algorithmic track-aware assignment
 router.post('/assignments/auto', requireOrganizer, (req, res) => {
-  const { reviews_per_project = 3, batch_id = 'auto_batch' } = req.body;
+  const { reviews_per_project = 3, batch_id = 'auto_batch', event_id } = req.body;
   const db = getDatabase();
 
-  const event = db.prepare('SELECT id FROM events ORDER BY created_at DESC LIMIT 1').get();
+  const event = event_id
+    ? db.prepare('SELECT id FROM events WHERE id = ?').get(event_id)
+    : db.prepare('SELECT id FROM events ORDER BY created_at DESC LIMIT 1').get();
   if (!event) return res.status(404).json({ error: 'Event not found' });
 
   const projects = db.prepare(`

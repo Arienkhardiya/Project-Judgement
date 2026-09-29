@@ -67,8 +67,8 @@ export function seedDatabase(db = getDatabase(), fixturesPath) {
 
   // 5. Seed Users & User Roles
   const insertUser = db.prepare(`
-    INSERT OR IGNORE INTO users (id, email, name, password_hash)
-    VALUES (?, ?, ?, ?)
+    INSERT OR IGNORE INTO users (id, email, name, password_hash, is_verified)
+    VALUES (?, ?, ?, ?, 1)
   `);
   const insertUserRole = db.prepare(`
     INSERT OR IGNORE INTO user_roles (user_id, role_id)
@@ -199,7 +199,7 @@ export function seedDatabase(db = getDatabase(), fixturesPath) {
 
   // 9. Create Fixed Test Sessions
   const insertSession = db.prepare(`
-    INSERT OR IGNORE INTO sessions (token, user_id, expires_at)
+    INSERT OR REPLACE INTO sessions (token, user_id, expires_at)
     VALUES (?, ?, datetime('now', '+30 days'))
   `);
 

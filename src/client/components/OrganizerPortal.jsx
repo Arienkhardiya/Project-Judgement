@@ -1,13 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import OrganizerPairwiseView from './OrganizerPairwiseView.jsx';
 
-export default function OrganizerPortal({ user }) {
+export default function OrganizerPortal({ user, onCreateNewEvent, initialEventId }) {
   const [subTab, setSubTab] = useState('dashboard'); // 'dashboard', 'normalized', 'pairwise', 'audit', 'events', 'voting', 'moderation'
   const [dashboardData, setDashboardData] = useState(null);
   const [normalizedData, setNormalizedData] = useState(null);
   const [auditLogs, setAuditLogs] = useState([]);
   const [events, setEvents] = useState([]);
-  const [selectedEventId, setSelectedEventId] = useState('');
+  const [selectedEventId, setSelectedEventId] = useState(initialEventId || '');
   const [eventDetails, setEventDetails] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -33,6 +33,9 @@ export default function OrganizerPortal({ user }) {
   // Forms
   const [eventForm, setEventForm] = useState({ name: '', description: '', start_time: '', end_time: '', submissions_close: '' });
   const [inviteJudgeForm, setInviteJudgeForm] = useState({ name: '', email: '', track_ids: [] });
+  const [invitations, setInvitations] = useState([]);
+  const [lastInvite, setLastInvite] = useState(null);
+  const [copiedToken, setCopiedToken] = useState(null);
 
   // Auto Assignment State
   const [showAutoAssignModal, setShowAutoAssignModal] = useState(false);
@@ -56,11 +59,25 @@ export default function OrganizerPortal({ user }) {
   const handleEventChange = (eventId) => {
     setSelectedEventId(eventId);
     loadEventDetails(eventId);
+    loadInvitations(eventId);
     if (subTab === 'dashboard') loadDashboard(eventId);
     else if (subTab === 'normalized') loadNormalized(eventId);
     else if (subTab === 'voting') {
       loadVotingWindows(eventId);
       loadVotingResults(eventId);
+    }
+  };
+
+  const loadInvitations = async (eventId = selectedEventId) => {
+    try {
+      const q = eventId ? `?event_id=${encodeURIComponent(eventId)}` : '';
+      const res = await fetch(`/api/organizer/invitations${q}`);
+      if (res.ok) {
+        const data = await res.json();
+        setInvitations(data.invitations || []);
+      }
+    } catch (err) {
+      console.error('Error loading invitations:', err);
     }
   };
 
@@ -73,6 +90,7 @@ export default function OrganizerPortal({ user }) {
         const data = await res.json();
         setDashboardData(data);
       }
+      loadInvitations(eventId);
     } catch (err) {
       console.error(err);
     } finally {
@@ -113,16 +131,22 @@ export default function OrganizerPortal({ user }) {
 
   const loadEvents = async () => {
     try {
-      const res = await fetch('/api/events');
+      const endpoint = user?.roles?.includes('admin') ? '/api/events' : '/api/events?my_events=true';
+      const res = await fetch(endpoint);
       const data = await res.json();
-      setEvents(data.events || []);
-      if (data.events && data.events.length > 0) {
-        const initialId = selectedEventId || data.events[0].id;
-        if (!selectedEventId) {
-          setSelectedEventId(initialId);
-        }
+      const eventList = data.events || [];
+      setEvents(eventList);
+      if (eventList.length > 0) {
+        const initialId = selectedEventId && eventList.some(e => e.id === selectedEventId)
+          ? selectedEventId
+          : eventList[0].id;
+        setSelectedEventId(initialId);
         loadEventDetails(initialId);
         loadDashboard(initialId);
+      } else {
+        setSelectedEventId('');
+        setDashboardData(null);
+        setEventDetails(null);
       }
     } catch (err) {
       console.error(err);
@@ -391,16 +415,55 @@ export default function OrganizerPortal({ user }) {
     e.preventDefault();
     setError(null);
     setSuccess(null);
+    setLastInvite(null);
     try {
       const res = await fetch('/api/organizer/judges/invite', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(inviteJudgeForm),
+        body: JSON.stringify({
+          ...inviteJudgeForm,
+          event_id: selectedEventId || undefined,
+        }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to invite judge');
-      setSuccess(data.message);
+
+      const origin = window.location.origin;
+      const fullInviteLink = data.inviteLink.startsWith('http')
+        ? data.inviteLink
+        : `${origin}${data.inviteLink.startsWith('/') ? data.inviteLink : '/' + data.inviteLink}`;
+
+      setLastInvite({
+        inviteLink: fullInviteLink,
+        email: data.judge?.email || inviteJudgeForm.email,
+        name: data.judge?.name || inviteJudgeForm.name,
+        defaultPassword: data.defaultPassword,
+        emailDelivered: data.emailDelivered,
+        token: data.token,
+      });
+
+      const msg = data.emailDelivered
+        ? `Invitation successfully dispatched via email to ${data.judge.name} (${data.judge.email}).`
+        : `Judge onboarding credentials generated. Email delivery is offline; direct link is ready to copy below.`;
+      setSuccess(msg);
       setInviteJudgeForm({ name: '', email: '', track_ids: [] });
+      loadDashboard(selectedEventId);
+      loadInvitations(selectedEventId);
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  const handlePublishResults = async () => {
+    const targetId = selectedEventId || dashboardData?.event?.id;
+    if (!targetId) return;
+    setError(null);
+    setSuccess(null);
+    try {
+      const res = await fetch(`/api/events/${targetId}/publish-results`, { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to publish results');
+      setSuccess('Official competition results successfully published to public portal!');
       loadDashboard();
     } catch (err) {
       setError(err.message);
@@ -408,6 +471,82 @@ export default function OrganizerPortal({ user }) {
   };
 
   const flaggedCount = moderationComments.filter(c => c.is_flagged).length;
+
+  const getLifecycleState = () => {
+    if (!dashboardData) return null;
+    const { lifecycle, totals, event } = dashboardData;
+    const teams = lifecycle?.total_teams || 0;
+    const participants = lifecycle?.total_participants || 0;
+    const projects = lifecycle?.total_projects || 0;
+    const submittedProjects = lifecycle?.submitted_projects || 0;
+    const draftProjects = lifecycle?.draft_projects || 0;
+    const totalAssignments = totals?.total || 0;
+    const submittedReviews = totals?.submitted || 0;
+    const completionPct = totals?.completion_percentage || 0;
+    const resultsPublished = !!event?.results_published;
+
+    let phaseName = 'Registration & Onboarding';
+    let phaseBadge = 'REGISTRATION ACTIVE';
+    let phaseBadgeColor = 'var(--brand-accent, #38bdf8)';
+    let nextActionTitle = 'Share Public Portal & Onboard Participants';
+    let nextActionText = 'Invite hackers to join the event, form teams, and begin creating project drafts.';
+    let actionType = 'share';
+
+    if (resultsPublished) {
+      phaseName = 'Competition Certified & Results Published';
+      phaseBadge = 'RESULTS PUBLISHED';
+      phaseBadgeColor = 'var(--success, #10b981)';
+      nextActionTitle = 'Export Certified Records';
+      nextActionText = 'Official results are live. Download signed cryptographic archives and CSV audit ledgers.';
+      actionType = 'export';
+    } else if (totalAssignments > 0 && submittedReviews >= totalAssignments) {
+      phaseName = 'Judging Concluded — Ready for Publication';
+      phaseBadge = 'REVIEWS 100% COMPLETE';
+      phaseBadgeColor = 'var(--warning, #f59e0b)';
+      nextActionTitle = 'Inspect Normalized Rankings & Publish Results';
+      nextActionText = 'All assigned judge reviews are complete. Review z-score normalized rankings and publish official winners to participants.';
+      actionType = 'publish';
+    } else if (totalAssignments > 0) {
+      phaseName = 'Active Evaluation Phase';
+      phaseBadge = 'JUDGING IN PROGRESS';
+      phaseBadgeColor = 'var(--warning, #f59e0b)';
+      nextActionTitle = 'Monitor Judging Completion';
+      nextActionText = `${submittedReviews} of ${totalAssignments} assigned reviews submitted (${completionPct}%). Follow up with pending judges or view real-time score submissions.`;
+      actionType = 'judging';
+    } else if (submittedProjects > 0) {
+      phaseName = 'Submission Phase Concluded';
+      phaseBadge = 'SUBMISSIONS READY';
+      phaseBadgeColor = 'var(--brand-accent, #38bdf8)';
+      nextActionTitle = 'Assign Judges to Projects';
+      nextActionText = `${submittedProjects} project(s) submitted and awaiting evaluation. Run automated assignment or configure custom judge pairings.`;
+      actionType = 'assign';
+    } else if (teams > 0) {
+      phaseName = 'Hacking & Project Drafting';
+      phaseBadge = 'HACKING ACTIVE';
+      phaseBadgeColor = 'var(--brand-accent, #38bdf8)';
+      nextActionTitle = 'Awaiting Project Submissions';
+      nextActionText = `${teams} team(s) formed (${draftProjects} draft project(s) in progress). Submissions will appear as teams finalize their work.`;
+      actionType = 'waiting';
+    }
+
+    return {
+      phaseName,
+      phaseBadge,
+      phaseBadgeColor,
+      nextActionTitle,
+      nextActionText,
+      actionType,
+      teams,
+      participants,
+      projects,
+      submittedProjects,
+      draftProjects,
+      totalAssignments,
+      submittedReviews,
+      completionPct,
+      resultsPublished
+    };
+  };
 
   return (
     <div className="container">
@@ -417,14 +556,14 @@ export default function OrganizerPortal({ user }) {
           <div>
             <div className="dashboard-eyebrow">
               <span className="tag-version-dot"></span>
-              Organizer Command Console
+              VERIDICT &bull; Organizer Operations Center
             </div>
             <h1 className="dashboard-title">Hackathon Operations Center</h1>
             <p className="dashboard-desc">
-              Real-time judging telemetry, Empirical Bayes cross-judge normalization, immutable audit logs, and community voting oversight.
+              Manage competition lifecycle, monitor submissions and judging progress, run cross-judge score normalization, and publish certified results.
             </p>
 
-            {events.length > 0 && (
+            {events.length > 0 ? (
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem', marginTop: '0.75rem', flexWrap: 'wrap' }}>
                 <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', fontWeight: 600 }}>Active Event:</span>
                 <select
@@ -435,56 +574,96 @@ export default function OrganizerPortal({ user }) {
                 >
                   {events.map(ev => (
                     <option key={ev.id} value={ev.id}>
-                      {ev.name} ({ev.id})
+                      {ev.name} ({ev.slug || ev.id})
                     </option>
                   ))}
                 </select>
+
+                {onCreateNewEvent && (
+                  <button
+                    type="button"
+                    className="btn btn-primary btn-xs"
+                    onClick={onCreateNewEvent}
+                    style={{ padding: '0.35rem 0.65rem' }}
+                  >
+                    + Create New Hackathon
+                  </button>
+                )}
               </div>
+            ) : (
+              onCreateNewEvent && (
+                <div style={{ marginTop: '0.75rem' }}>
+                  <button
+                    type="button"
+                    className="btn btn-primary btn-sm"
+                    onClick={onCreateNewEvent}
+                    style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem' }}
+                  >
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                    Create Your First Hackathon
+                  </button>
+                </div>
+              )
             )}
           </div>
 
-          <div className="dashboard-actions" style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-            <a
-              href={`/api/export.csv${selectedEventId ? '?event_id=' + encodeURIComponent(selectedEventId) : ''}`}
-              download="dogfood-results.csv"
-              className="btn btn-secondary btn-sm"
-              style={{ display: 'inline-flex', alignItems: 'center', gap: '0.45rem' }}
-              title="Download RFC 4180 results CSV"
-            >
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-              Export CSV
-            </a>
+          {events.length > 0 && (
+            <div className="dashboard-actions" style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+              {dashboardData?.event && !dashboardData.event.results_published && (
+                <button
+                  type="button"
+                  className="btn btn-primary btn-sm"
+                  onClick={handlePublishResults}
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: '0.45rem' }}
+                  title="Publish verified competition results to the public event portal"
+                >
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+                  Publish Results
+                </button>
+              )}
 
-            <a
-              href={`/api/organizer/export.json${selectedEventId ? '?event_id=' + encodeURIComponent(selectedEventId) : ''}`}
-              download={`dogfood-export-${selectedEventId || 'all'}.json`}
-              className="btn btn-secondary btn-sm"
-              style={{ display: 'inline-flex', alignItems: 'center', gap: '0.45rem' }}
-              title="Download Ed25519-signed full event JSON bundle (T4)"
-            >
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><polyline points="9 12 11 14 15 10"/></svg>
-              Export Signed JSON
-            </a>
+              <a
+                href={`/api/export.csv${selectedEventId ? '?event_id=' + encodeURIComponent(selectedEventId) : ''}`}
+                download={`veridict-results-${selectedEventId || 'all'}.csv`}
+                className="btn btn-secondary btn-sm"
+                style={{ display: 'inline-flex', alignItems: 'center', gap: '0.45rem' }}
+                title="Download RFC 4180 results CSV"
+              >
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                Export CSV
+              </a>
 
-            <input
-              type="file"
-              ref={fileInputRef}
-              onChange={handleImportJsonFile}
-              accept=".json"
-              style={{ display: 'none' }}
-            />
-            <button
-              type="button"
-              className="btn btn-secondary btn-sm"
-              onClick={() => fileInputRef.current?.click()}
-              disabled={importingJson}
-              style={{ display: 'inline-flex', alignItems: 'center', gap: '0.45rem' }}
-              title="Import complete event dataset from signed JSON bundle (T4)"
-            >
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-              {importingJson ? 'Importing...' : 'Import JSON Bundle'}
-            </button>
-          </div>
+              <a
+                href={`/api/organizer/export.json${selectedEventId ? '?event_id=' + encodeURIComponent(selectedEventId) : ''}`}
+                download={`veridict-export-${selectedEventId || 'all'}.json`}
+                className="btn btn-secondary btn-sm"
+                style={{ display: 'inline-flex', alignItems: 'center', gap: '0.45rem' }}
+                title="Download Ed25519-signed full event JSON bundle (T4)"
+              >
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><polyline points="9 12 11 14 15 10"/></svg>
+                Export Signed JSON
+              </a>
+
+              <input
+                type="file"
+                ref={fileInputRef}
+                onChange={handleImportJsonFile}
+                accept=".json"
+                style={{ display: 'none' }}
+              />
+              <button
+                type="button"
+                className="btn btn-secondary btn-sm"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={importingJson}
+                style={{ display: 'inline-flex', alignItems: 'center', gap: '0.45rem' }}
+                title="Import complete event dataset from signed JSON bundle (T4)"
+              >
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                {importingJson ? 'Importing...' : 'Import JSON Bundle'}
+              </button>
+            </div>
+          )}
         </div>
       </div>
 
@@ -506,75 +685,223 @@ export default function OrganizerPortal({ user }) {
         </div>
       )}
 
-      {/* Sub-Tabs Navigation */}
-      <nav className="subtab-nav" aria-label="Organizer sub-navigation">
-        <button
-          type="button"
-          className={`subtab-btn ${subTab === 'dashboard' ? 'active' : ''}`}
-          onClick={() => handleSubTabChange('dashboard')}
-        >
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
-          Judging Dashboard
-        </button>
-        <button
-          type="button"
-          className={`subtab-btn ${subTab === 'normalized' ? 'active' : ''}`}
-          onClick={() => handleSubTabChange('normalized')}
-        >
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
-          Cross-Judge Normalization
-        </button>
-        <button
-          type="button"
-          className={`subtab-btn ${subTab === 'pairwise' ? 'active' : ''}`}
-          onClick={() => handleSubTabChange('pairwise')}
-        >
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><path d="M10 7h4v4"/></svg>
-          Pairwise Mode (Bonus B)
-        </button>
-        <button
-          type="button"
-          className={`subtab-btn ${subTab === 'audit' ? 'active' : ''}`}
-          onClick={() => handleSubTabChange('audit')}
-        >
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
-          Audit Trail
-        </button>
-        <button
-          type="button"
-          className={`subtab-btn ${subTab === 'events' ? 'active' : ''}`}
-          onClick={() => handleSubTabChange('events')}
-        >
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
-          Event & Track Config
-        </button>
-        <button
-          type="button"
-          className={`subtab-btn ${subTab === 'voting' ? 'active' : ''}`}
-          onClick={() => handleSubTabChange('voting')}
-        >
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/></svg>
-          Community Voting & Results
-        </button>
-        <button
-          type="button"
-          className={`subtab-btn ${subTab === 'moderation' ? 'active' : ''}`}
-          onClick={() => handleSubTabChange('moderation')}
-        >
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-          Comment Moderation
-          {flaggedCount > 0 && (
-            <span className="subtab-badge">{flaggedCount}</span>
+      {/* Sub-Tabs Navigation or Empty State */}
+      {events.length === 0 ? (
+        <div className="card" style={{ padding: '4rem 2rem', textAlign: 'center', maxWidth: '680px', margin: '3rem auto', borderRadius: '16px', border: '1px solid var(--border-color)', background: 'var(--card-bg)' }}>
+          <div style={{ width: '64px', height: '64px', borderRadius: '16px', background: 'rgba(56, 189, 248, 0.1)', border: '1px solid rgba(56, 189, 248, 0.25)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', marginBottom: '1.5rem', color: 'var(--brand-accent, #38bdf8)' }}>
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+          </div>
+          <h2 style={{ fontSize: '1.75rem', fontWeight: 700, marginBottom: '0.75rem', letterSpacing: '-0.02em', color: 'var(--text-color)' }}>
+            WELCOME TO VERIDICT
+          </h2>
+          <p style={{ color: 'var(--text-muted)', fontSize: '1rem', lineHeight: '1.6', marginBottom: '2rem', maxWidth: '500px', margin: '0 auto 2rem auto' }}>
+            You don't have any hackathons yet. Launch your first event to configure tracks, invite judges, accept participant submissions, and execute rigorous evaluations.
+          </p>
+          {onCreateNewEvent && (
+            <button
+              type="button"
+              className="btn btn-primary btn-lg"
+              onClick={onCreateNewEvent}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem', margin: '0 auto', padding: '0.75rem 1.75rem', fontWeight: 600 }}
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+              Create Your First Hackathon
+            </button>
           )}
-        </button>
-      </nav>
+        </div>
+      ) : (
+        <>
+          <nav className="subtab-nav" aria-label="Organizer sub-navigation">
+            <button
+              type="button"
+              className={`subtab-btn ${subTab === 'dashboard' ? 'active' : ''}`}
+              onClick={() => handleSubTabChange('dashboard')}
+            >
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+              Judging Dashboard
+            </button>
+            <button
+              type="button"
+              className={`subtab-btn ${subTab === 'normalized' ? 'active' : ''}`}
+              onClick={() => handleSubTabChange('normalized')}
+            >
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+              Cross-Judge Normalization
+            </button>
+            <button
+              type="button"
+              className={`subtab-btn ${subTab === 'pairwise' ? 'active' : ''}`}
+              onClick={() => handleSubTabChange('pairwise')}
+            >
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><path d="M10 7h4v4"/></svg>
+              Pairwise Mode (Bonus B)
+            </button>
+            <button
+              type="button"
+              className={`subtab-btn ${subTab === 'audit' ? 'active' : ''}`}
+              onClick={() => handleSubTabChange('audit')}
+            >
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+              Audit Trail
+            </button>
+            <button
+              type="button"
+              className={`subtab-btn ${subTab === 'events' ? 'active' : ''}`}
+              onClick={() => handleSubTabChange('events')}
+            >
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+              Event & Track Config
+            </button>
+            <button
+              type="button"
+              className={`subtab-btn ${subTab === 'voting' ? 'active' : ''}`}
+              onClick={() => handleSubTabChange('voting')}
+            >
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/></svg>
+              Community Voting & Results
+            </button>
+            <button
+              type="button"
+              className={`subtab-btn ${subTab === 'moderation' ? 'active' : ''}`}
+              onClick={() => handleSubTabChange('moderation')}
+            >
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+              Comment Moderation
+              {flaggedCount > 0 && (
+                <span className="subtab-badge">{flaggedCount}</span>
+              )}
+            </button>
+          </nav>
 
-      {/* ===================================================================
-          SUBTAB 1: JUDGING PROGRESS DASHBOARD
-          =================================================================== */}
-      {subTab === 'dashboard' && dashboardData && (
-        <div>
-          {/* Top KPI Cards (Real Data) */}
+          {/* ===================================================================
+              SUBTAB 1: JUDGING PROGRESS DASHBOARD
+              =================================================================== */}
+          {subTab === 'dashboard' && dashboardData && (
+            <div>
+              {/* Operational Control Center Banner */}
+              {(() => {
+                const lc = getLifecycleState();
+                if (!lc) return null;
+                return (
+                  <div
+                    className="control-center-banner card-panel"
+                    style={{
+                      marginBottom: '1.5rem',
+                      padding: '1.25rem 1.5rem',
+                      borderRadius: '14px',
+                      background: 'linear-gradient(135deg, rgba(255, 255, 255, 0.03) 0%, rgba(255, 255, 255, 0.01) 100%)',
+                      border: '1px solid var(--border-color)',
+                      boxShadow: '0 8px 24px rgba(0, 0, 0, 0.12)'
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '1rem', paddingBottom: '1rem', borderBottom: '1px solid var(--border-subtle, rgba(255, 255, 255, 0.06))' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.25rem 0.65rem', borderRadius: '9999px', background: 'rgba(255, 255, 255, 0.04)', border: '1px solid var(--border-subtle)' }}>
+                          <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: lc.phaseBadgeColor, boxShadow: `0 0 8px ${lc.phaseBadgeColor}` }}></span>
+                          <span style={{ fontSize: '0.72rem', fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: lc.phaseBadgeColor }}>{lc.phaseBadge}</span>
+                        </div>
+                        <span style={{ fontSize: '0.9rem', fontWeight: 600, color: 'var(--text-color)' }}>
+                          Lifecycle Phase: <strong style={{ color: 'var(--text-bright, #fff)' }}>{lc.phaseName}</strong>
+                        </span>
+                      </div>
+
+                      {/* Real-time Lifecycle Telemetry Pills */}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '1.25rem', flexWrap: 'wrap', fontSize: '0.82rem', color: 'var(--text-muted)' }}>
+                        <span title="Registered Teams">
+                          <strong style={{ color: 'var(--text-bright, #fff)', fontFamily: 'var(--font-mono)' }}>{lc.teams}</strong> Teams
+                        </span>
+                        <span style={{ color: 'var(--border-color)' }}>&bull;</span>
+                        <span title="Registered Participants">
+                          <strong style={{ color: 'var(--text-bright, #fff)', fontFamily: 'var(--font-mono)' }}>{lc.participants}</strong> Participants
+                        </span>
+                        <span style={{ color: 'var(--border-color)' }}>&bull;</span>
+                        <span title="Submitted Projects">
+                          <strong style={{ color: 'var(--text-bright, #fff)', fontFamily: 'var(--font-mono)' }}>{lc.submittedProjects}</strong> / {lc.projects} Submissions
+                        </span>
+                        <span style={{ color: 'var(--border-color)' }}>&bull;</span>
+                        <span title="Judging Progress">
+                          <strong style={{ color: 'var(--text-bright, #fff)', fontFamily: 'var(--font-mono)' }}>{lc.submittedReviews}</strong> / {lc.totalAssignments} Reviews ({lc.completionPct}%)
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Intelligent Next Action Row */}
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '1rem', paddingTop: '1rem' }}>
+                      <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.75rem', maxWidth: '750px' }}>
+                        <div style={{ marginTop: '0.15rem', color: lc.phaseBadgeColor, flexShrink: 0 }}>
+                          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                        </div>
+                        <div>
+                          <div style={{ fontSize: '0.85rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--text-bright, #fff)', marginBottom: '0.2rem' }}>
+                            Recommended Next Action: {lc.nextActionTitle}
+                          </div>
+                          <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)', lineHeight: '1.4' }}>
+                            {lc.nextActionText}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div style={{ display: 'flex', gap: '0.5rem', flexShrink: 0 }}>
+                        {lc.actionType === 'assign' && (
+                          <button
+                            type="button"
+                            className="btn btn-primary btn-sm"
+                            onClick={() => setShowAutoAssignModal(true)}
+                            style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem', fontWeight: 600 }}
+                          >
+                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><polyline points="16 11 18 13 22 9"/></svg>
+                            Auto-Assign Reviews
+                          </button>
+                        )}
+                        {lc.actionType === 'publish' && !lc.resultsPublished && (
+                          <button
+                            type="button"
+                            className="btn btn-primary btn-sm"
+                            onClick={handlePublishResults}
+                            style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem', fontWeight: 600 }}
+                          >
+                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+                            Publish Results Now
+                          </button>
+                        )}
+                        {lc.actionType === 'export' && (
+                          <a
+                            href={`/api/organizer/export.json${selectedEventId ? '?event_id=' + encodeURIComponent(selectedEventId) : ''}`}
+                            download={`veridict-export-${selectedEventId || 'all'}.json`}
+                            className="btn btn-primary btn-sm"
+                            style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem', fontWeight: 600 }}
+                          >
+                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><polyline points="9 12 11 14 15 10"/></svg>
+                            Download Signed Archive
+                          </a>
+                        )}
+                        {lc.actionType === 'judging' && (
+                          <button
+                            type="button"
+                            className="btn btn-secondary btn-sm"
+                            onClick={() => handleSubTabChange('normalized')}
+                            style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem' }}
+                          >
+                            View Score Normalization
+                          </button>
+                        )}
+                        {lc.actionType === 'waiting' && (
+                          <button
+                            type="button"
+                            className="btn btn-secondary btn-sm"
+                            onClick={() => handleSubTabChange('events')}
+                            style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem' }}
+                          >
+                            Configure Event Tracks
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Top KPI Cards (Real Data) */}
           <div className="stat-grid">
             <div className="stat-card">
               <div className="stat-label">
@@ -700,6 +1027,54 @@ export default function OrganizerPortal({ user }) {
                   Send Judge Invitation
                 </button>
               </form>
+
+              {lastInvite && (
+                <div style={{
+                  marginTop: '1rem',
+                  padding: '0.85rem',
+                  background: 'var(--surface-raised)',
+                  border: '1px solid var(--primary)',
+                  borderRadius: 'var(--radius)',
+                }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.4rem' }}>
+                    <span style={{ fontSize: '0.78rem', color: 'var(--primary)', fontWeight: 700, textTransform: 'uppercase' }}>
+                      {lastInvite.emailDelivered ? '✓ Email Sent & Link Ready' : '📋 Direct Link Ready (Offline Mode)'}
+                    </span>
+                    <span style={{ fontSize: '0.72rem', color: 'var(--text-dim)' }}>
+                      Expires in 7 days
+                    </span>
+                  </div>
+
+                  <div style={{ fontSize: '0.82rem', color: 'var(--text-muted)', marginBottom: '0.5rem' }}>
+                    Judge: <strong style={{ color: 'var(--text-bright)' }}>{lastInvite.name}</strong> ({lastInvite.email})
+                    {lastInvite.defaultPassword && (
+                      <span> &bull; Temp Password: <code style={{ color: 'var(--primary)' }}>{lastInvite.defaultPassword}</code></span>
+                    )}
+                  </div>
+
+                  <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                    <input
+                      type="text"
+                      readOnly
+                      className="form-control"
+                      value={lastInvite.inviteLink}
+                      style={{ fontSize: '0.78rem', padding: '0.35rem 0.5rem' }}
+                    />
+                    <button
+                      type="button"
+                      className="btn btn-secondary btn-xs"
+                      onClick={() => {
+                        navigator.clipboard.writeText(lastInvite.inviteLink);
+                        setCopiedToken(lastInvite.token);
+                        setTimeout(() => setCopiedToken(null), 2500);
+                      }}
+                      style={{ whiteSpace: 'nowrap' }}
+                    >
+                      {copiedToken === lastInvite.token ? '✓ Copied' : 'Copy'}
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Automated Review Assignment Card */}
@@ -734,6 +1109,79 @@ export default function OrganizerPortal({ user }) {
               </button>
             </div>
           </div>
+
+          {/* Issued Judge Invitations Table */}
+          {invitations.length > 0 && (
+            <div className="card-panel">
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', flexWrap: 'wrap', gap: '0.5rem' }}>
+                <h2 style={{ margin: 0, padding: 0, border: 'none' }}>
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
+                  Issued Judge Invitations ({invitations.length})
+                </h2>
+                <span style={{ fontSize: '0.8rem', color: 'var(--text-dim)' }}>
+                  Cryptographic tokens &bull; Single-use onboarding
+                </span>
+              </div>
+
+              <div className="data-table-container">
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>Invited Name</th>
+                      <th>Email</th>
+                      <th>Status</th>
+                      <th>Created</th>
+                      <th>Expires</th>
+                      <th>Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {invitations.map(inv => {
+                      const link = `${window.location.origin}/invite/judge/${inv.token}`;
+                      return (
+                        <tr key={inv.id}>
+                          <td style={{ fontWeight: 600 }}>{inv.name}</td>
+                          <td style={{ color: 'var(--text-muted)' }}>{inv.email}</td>
+                          <td>
+                            <span className="status-badge" style={{
+                              background: inv.status === 'ACCEPTED' ? 'rgba(16, 185, 129, 0.15)' : inv.status === 'PENDING' ? 'rgba(56, 189, 248, 0.15)' : 'rgba(239, 68, 68, 0.15)',
+                              color: inv.status === 'ACCEPTED' ? '#6ee7b7' : inv.status === 'PENDING' ? '#93c5fd' : '#fca5a5',
+                              border: `1px solid ${inv.status === 'ACCEPTED' ? 'rgba(16, 185, 129, 0.35)' : inv.status === 'PENDING' ? 'rgba(56, 189, 248, 0.35)' : 'rgba(239, 68, 68, 0.35)'}`,
+                              padding: '0.2rem 0.55rem',
+                              borderRadius: 'var(--radius-full)',
+                              fontSize: '0.72rem',
+                              fontWeight: 700
+                            }}>
+                              {inv.status}
+                            </span>
+                          </td>
+                          <td style={{ color: 'var(--text-dim)', fontSize: '0.8rem' }}>
+                            {new Date(inv.created_at).toLocaleDateString()}
+                          </td>
+                          <td style={{ color: 'var(--text-dim)', fontSize: '0.8rem' }}>
+                            {new Date(inv.expires_at).toLocaleDateString()}
+                          </td>
+                          <td>
+                            <button
+                              type="button"
+                              className="btn btn-secondary btn-xs"
+                              onClick={() => {
+                                navigator.clipboard.writeText(link);
+                                setCopiedToken(inv.token);
+                                setTimeout(() => setCopiedToken(null), 2500);
+                              }}
+                            >
+                              {copiedToken === inv.token ? '✓ Copied' : 'Copy Link'}
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
 
           {/* Full-Width Judge Workload Table */}
           <div className="card-panel">
@@ -1541,6 +1989,8 @@ export default function OrganizerPortal({ user }) {
             </div>
           )}
         </div>
+      )}
+        </>
       )}
     </div>
   );

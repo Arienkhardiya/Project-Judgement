@@ -24,6 +24,41 @@ export default function JudgePairwiseView({ user }) {
     }
   }, [user]);
 
+  // Keyboard navigation & decision shortcuts
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      const tag = e.target?.tagName?.toLowerCase();
+      if (tag === 'input' || tag === 'textarea' || e.target?.isContentEditable) return;
+
+      if (!pairDetail || pairDetail.pair_status === 'COMPLETED' || pairDetail.comparison_id) {
+        if (e.key === 'Escape') {
+          setSelectedPairId(null);
+        }
+        return;
+      }
+
+      if (e.key === '1') {
+        e.preventDefault();
+        setDecision('A');
+      } else if (e.key === '2') {
+        e.preventDefault();
+        setDecision('B');
+      } else if (e.key === 't' || e.key === 'T') {
+        e.preventDefault();
+        setDecision('TIE');
+      } else if (e.key === 'Enter' && decision && !submitting) {
+        e.preventDefault();
+        handleSubmitComparison();
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        setSelectedPairId(null);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [pairDetail, decision, submitting]);
+
   const loadPairAssignments = async (selectNextId = null) => {
     setLoading(true);
     setError(null);
@@ -470,6 +505,7 @@ export default function JudgePairwiseView({ user }) {
                         style={{ width: '100%', marginTop: '0.5rem', fontWeight: 700 }}
                       >
                         {decision === 'A' ? '✓ Project A Selected as Winner' : 'Vote Project A as Winner'}
+                        <span className="kbd-badge" style={{ marginLeft: '0.4rem' }}>[1]</span>
                       </button>
                     )}
                   </div>
@@ -551,6 +587,7 @@ export default function JudgePairwiseView({ user }) {
                         style={{ width: '100%', marginTop: '0.5rem', fontWeight: 700 }}
                       >
                         {decision === 'B' ? '✓ Project B Selected as Winner' : 'Vote Project B as Winner'}
+                        <span className="kbd-badge" style={{ marginLeft: '0.4rem' }}>[2]</span>
                       </button>
                     )}
                   </div>
@@ -602,7 +639,9 @@ export default function JudgePairwiseView({ user }) {
                             onClick={() => setDecision('A')}
                             style={{ padding: '0.75rem 1rem', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.25rem' }}
                           >
-                            <span style={{ fontWeight: 800 }}>Project A Wins</span>
+                            <span style={{ fontWeight: 800, display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}>
+                              Project A Wins <span className="kbd-badge">[1]</span>
+                            </span>
                             <span style={{ fontSize: '0.75rem', opacity: 0.85 }}>{pairDetail.project_a_title}</span>
                           </button>
 
@@ -612,7 +651,9 @@ export default function JudgePairwiseView({ user }) {
                             onClick={() => setDecision('TIE')}
                             style={{ padding: '0.75rem 1rem', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.25rem' }}
                           >
-                            <span style={{ fontWeight: 800 }}>Tie / Even Match</span>
+                            <span style={{ fontWeight: 800, display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}>
+                              Tie / Even Match <span className="kbd-badge">[T]</span>
+                            </span>
                             <span style={{ fontSize: '0.75rem', opacity: 0.85 }}>Both projects are equally merited</span>
                           </button>
 
@@ -622,7 +663,9 @@ export default function JudgePairwiseView({ user }) {
                             onClick={() => setDecision('B')}
                             style={{ padding: '0.75rem 1rem', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.25rem' }}
                           >
-                            <span style={{ fontWeight: 800 }}>Project B Wins</span>
+                            <span style={{ fontWeight: 800, display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}>
+                              Project B Wins <span className="kbd-badge">[2]</span>
+                            </span>
                             <span style={{ fontSize: '0.75rem', opacity: 0.85 }}>{pairDetail.project_b_title}</span>
                           </button>
                         </div>
@@ -655,6 +698,7 @@ export default function JudgePairwiseView({ user }) {
                           disabled={submitting || !decision}
                         >
                           {submitting ? 'Recording Verdict...' : 'Submit Final Verdict'}
+                          <span className="kbd-badge" style={{ marginLeft: '0.35rem' }}>[Enter]</span>
                         </button>
 
                         {!decision && (

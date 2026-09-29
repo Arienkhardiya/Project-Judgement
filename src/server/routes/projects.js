@@ -27,7 +27,7 @@ function checkEventDeadline(db, eventId) {
 
 // GET /api/projects - Public project query with search & filter
 router.get('/api/projects', (req, res) => {
-  const { q, track, status, team_id, limit = 100, offset = 0 } = req.query;
+  const { q, track, status, team_id, event_id, limit = 100, offset = 0 } = req.query;
   const db = getDatabase();
 
   let query = `
@@ -52,6 +52,11 @@ router.get('/api/projects', (req, res) => {
   } else {
     // If not authenticated or visitor, only show SUBMITTED
     query += ` AND p.status = 'SUBMITTED'`;
+  }
+
+  if (event_id) {
+    query += ` AND t.event_id = ?`;
+    params.push(event_id);
   }
 
   if (track) {
@@ -303,8 +308,7 @@ router.put('/api/projects/:id', requireParticipant, (req, res) => {
   res.json({ message: 'Project updated successfully', project: updated });
 });
 
-// POST /api/projects/:id/submit - Transition DRAFT to SUBMITTED
-router.post('/api/projects/:id/submit', requireParticipant, (req, res) => {
+function handleFinalProjectSubmit(req, res) {
   const db = getDatabase();
   const project = db.prepare(`
     SELECT p.id, p.team_id, p.status, t.event_id, e.submissions_close, e.name as event_name
@@ -367,7 +371,11 @@ router.post('/api/projects/:id/submit', requireParticipant, (req, res) => {
     submitted_at: now,
   }).catch(() => {});
 
-  res.json({ message: 'Project submitted successfully' });
-});
+  const updatedProject = db.prepare('SELECT * FROM projects WHERE id = ?').get(project.id);
+  res.json({ message: 'Project submitted successfully', project: updatedProject });
+}
+
+router.post('/api/projects/:id/submit', requireParticipant, handleFinalProjectSubmit);
+router.put('/api/projects/:id/submit', requireParticipant, handleFinalProjectSubmit);
 
 export default router;
