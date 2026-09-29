@@ -79,7 +79,9 @@ export default function LoginModal({ isOpen, onClose, onLoginSuccess, isDemoMode
           email: signupEmail.trim(),
           token: data.verificationToken,
           link: data.verificationLink,
+          configured: data.emailConfigured,
           delivered: data.emailDelivered,
+          error: data.emailError,
           user: createdUser,
         });
         setTab('verify');
@@ -136,8 +138,11 @@ export default function LoginModal({ isOpen, onClose, onLoginSuccess, isDemoMode
       if (!res.ok) throw new Error(data.error || 'Request failed');
 
       if (data.resetToken) {
+        const text = data.emailConfigured
+          ? `⚠️ Reset email could not be sent (${data.emailError || 'SMTP error'}). Use the direct token below to reset your password:`
+          : 'Email delivery is not configured on this host. Use the direct token below to reset your password:';
         setInfo({
-          text: 'Email delivery is not configured on this host. Use the direct token below to reset your password:',
+          text,
           token: data.resetToken,
         });
         setResetToken(data.resetToken);
@@ -400,6 +405,21 @@ export default function LoginModal({ isOpen, onClose, onLoginSuccess, isDemoMode
                   onClick={() => { onLoginSuccess(verificationState.user); onClose(); }}
                 >
                   Continue to VERIDICT
+                </button>
+              </div>
+            ) : verificationState.configured ? (
+              <div style={{ background: 'rgba(255, 180, 0, 0.05)', border: '1px solid rgba(255, 180, 0, 0.3)', borderRadius: '10px', padding: '1.25rem', marginBottom: '1.5rem' }}>
+                <div style={{ fontSize: '0.82rem', color: '#f59e0b', marginBottom: '0.75rem', lineHeight: '1.4' }}>
+                  ⚠️ <em>Verification email could not be sent ({verificationState.error || 'SMTP delivery issue'}). You can verify your account directly:</em>
+                </div>
+                <button
+                  type="button"
+                  className="btn btn-primary btn-sm"
+                  onClick={() => handleVerifyEmail()}
+                  disabled={verifying}
+                  style={{ fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: '0.4rem' }}
+                >
+                  {verifying ? 'Verifying...' : 'Verify Email Address Now'}
                 </button>
               </div>
             ) : (

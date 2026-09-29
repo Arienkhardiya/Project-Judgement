@@ -438,13 +438,22 @@ export default function OrganizerPortal({ user, onCreateNewEvent, initialEventId
         email: data.judge?.email || inviteJudgeForm.email,
         name: data.judge?.name || inviteJudgeForm.name,
         defaultPassword: data.defaultPassword,
+        emailConfigured: data.emailConfigured,
         emailDelivered: data.emailDelivered,
+        emailError: data.emailError,
         token: data.token,
       });
 
-      const msg = data.emailDelivered
-        ? `Invitation successfully dispatched via email to ${data.judge.name} (${data.judge.email}).`
-        : `Judge onboarding credentials generated. Email delivery is offline; direct link is ready to copy below.`;
+      const judgeName = data.judge?.name || inviteJudgeForm.name;
+      const judgeEmail = data.judge?.email || inviteJudgeForm.email;
+      let msg = '';
+      if (data.emailDelivered) {
+        msg = `Invitation successfully dispatched via email to ${judgeName} (${judgeEmail}).`;
+      } else if (data.emailConfigured) {
+        msg = `Judge onboarding credentials generated. Email delivery could not be sent (${data.emailError || 'SMTP error'}). Direct link is ready to copy below.`;
+      } else {
+        msg = `Judge onboarding credentials generated. Email delivery is offline; direct link is ready to copy below.`;
+      }
       setSuccess(msg);
       setInviteJudgeForm({ name: '', email: '', track_ids: [] });
       loadDashboard(selectedEventId);
@@ -1037,8 +1046,17 @@ export default function OrganizerPortal({ user, onCreateNewEvent, initialEventId
                   borderRadius: 'var(--radius)',
                 }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.4rem' }}>
-                    <span style={{ fontSize: '0.78rem', color: 'var(--primary)', fontWeight: 700, textTransform: 'uppercase' }}>
-                      {lastInvite.emailDelivered ? '✓ Email Sent & Link Ready' : '📋 Direct Link Ready (Offline Mode)'}
+                    <span style={{
+                      fontSize: '0.78rem',
+                      color: lastInvite.emailDelivered ? 'var(--primary)' : (lastInvite.emailConfigured ? '#f59e0b' : 'var(--text-muted)'),
+                      fontWeight: 700,
+                      textTransform: 'uppercase'
+                    }}>
+                      {lastInvite.emailDelivered
+                        ? '✓ Email Dispatched & Link Ready'
+                        : (lastInvite.emailConfigured
+                            ? `⚠️ Send Failed (${lastInvite.emailError || 'SMTP Error'}) — Direct Link Ready`
+                            : '📋 Direct Link Ready (Email Offline)')}
                     </span>
                     <span style={{ fontSize: '0.72rem', color: 'var(--text-dim)' }}>
                       Expires in 7 days

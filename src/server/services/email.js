@@ -5,51 +5,82 @@ import crypto from 'node:crypto';
 /**
  * VERIDICT Email Service Layer
  * 
- * Supports standard RFC 5321 self-hosted SMTP configurations via environment variables:
- * - SMTP_HOST
- * - SMTP_PORT (default 587, or 465 if SMTP_SECURE=true)
- * - SMTP_USER
- * - SMTP_PASSWORD
+ * Supports standard RFC 5321 / RFC 3207 self-hosted and cloud SMTP configurations:
+ * - SMTP_HOST (e.g. smtp.gmail.com, mail.example.com)
+ * - SMTP_PORT (default 587 for STARTTLS, or 465 for direct TLS)
+ * - SMTP_USER (e.g. user@gmail.com)
+ * - SMTP_PASSWORD (e.g. Google App Password)
  * - SMTP_FROM (default: VERIDICT <noreply@veridict.local>)
- * - SMTP_SECURE ('true' for SMTPS/port 465, false for STARTTLS/plain)
+ * - SMTP_SECURE ('true' for SMTPS/direct TLS port 465, 'false' for STARTTLS/plain)
+ * - SMTP_TIMEOUT (default 8000ms)
  * 
- * In offline/self-hosted mode without SMTP credentials:
- * - isConfigured() returns false
- * - sendMail() returns { success: false, reason: 'SMTP_NOT_CONFIGURED' }
- * - Applications gracefully provide truthful secure link fallbacks without faking delivery.
+ * Fully supports STARTTLS upgrades on port 587 (required by Gmail SMTP)
+ * using native node:net and node:tls with ZERO external dependencies.
  */
 
 export class EmailService {
   constructor(config = {}) {
-    this.config = {
-      host: config.host || process.env.SMTP_HOST || '',
-      port: Number(config.port || process.env.SMTP_PORT) || (config.secure || process.env.SMTP_SECURE === 'true' ? 465 : 587),
-      user: config.user || process.env.SMTP_USER || '',
-      password: config.password || process.env.SMTP_PASSWORD || '',
-      from: config.from || process.env.SMTP_FROM || 'VERIDICT Platform <noreply@veridict.local>',
-      secure: config.secure !== undefined ? config.secure : process.env.SMTP_SECURE === 'true',
-      timeout: Number(config.timeout || process.env.SMTP_TIMEOUT) || 8000,
-    };
+    this.userConfig = config;
+  }
+
+  _resolveConfig() {
+    const host = (this.userConfig.host ?? process.env.SMTP_HOST ?? '').trim();
+    const rawPort = this.userConfig.port ?? process.env.SMTP_PORT;
+    const explicitSecure = this.userConfig.secure !== undefined
+      ? Boolean(this.userConfig.secure)
+      : (process.env.SMTP_SECURE === 'true');
+
+    let port = Number(rawPort);
+    if (!port || isNaN(port)) {
+      port = explicitSecure ? 465 : 587;
+    }
+
+    // Direct TLS (SMTPS) if port is 465 or explicitSecure is true
+    const secure = explicitSecure || port === 465;
+
+    const user = (this.userConfig.user ?? process.env.SMTP_USER ?? '').trim();
+    const password = (this.userConfig.password ?? process.env.SMTP_PASSWORD ?? '').trim();
+    const from = (this.userConfig.from ?? process.env.SMTP_FROM ?? 'VERIDICT Platform <noreply@veridict.local>').trim();
+    const timeout = Number(this.userConfig.timeout ?? process.env.SMTP_TIMEOUT) || 8000;
+
+    return { host, port, user, password, from, secure, timeout };
   }
 
   isConfigured() {
-    return Boolean(this.config.host && this.config.host.trim().length > 0);
+    const { host } = this._resolveConfig();
+    return Boolean(host && host.length > 0);
   }
 
   getConfig() {
+    const cfg = this._resolveConfig();
     return {
-      host: this.config.host,
-      port: this.config.port,
-      secure: this.config.secure,
-      user: this.config.user ? '***' : '',
-      from: this.config.from,
+      host: cfg.host,
+      port: cfg.port,
+      secure: cfg.secure,
+      useStartTls: !cfg.secure && (cfg.port === 587 || cfg.port === 25),
+      user: cfg.user ? '***' : '',
+      from: cfg.from,
       configured: this.isConfigured(),
     };
   }
 
+  getDiagnostics() {
+    const cfg = this._resolveConfig();
+    return {
+      configured: this.isConfigured(),
+      host: cfg.host,
+      port: cfg.port,
+      secure: cfg.secure,
+      useStartTls: !cfg.secure && (cfg.port === 587 || cfg.port === 25),
+      hasUser: Boolean(cfg.user && cfg.user.length > 0),
+      hasPassword: Boolean(cfg.password && cfg.password.length > 0),
+      from: cfg.from,
+    };
+  }
+
   /**
-   * Send an email via native SMTP RFC 5321 socket conversation.
-   * Requires zero external dependencies.
+   * Send an email via native SMTP RFC 5321 + RFC 3207 socket conversation.
+   * Seamlessly negotiates STARTTLS on port 587 or direct TLS on port 465.
    */
   async sendMail({ to, subject, html, text }) {
     if (!this.isConfigured()) {
@@ -60,27 +91,37 @@ export class EmailService {
       };
     }
 
-    const { host, port, user, password, from, secure, timeout } = this.config;
+    const { host, port, user, password, from, secure, timeout } = this._resolveConfig();
     const messageId = `<${Date.now()}.${crypto.randomBytes(8).toString('hex')}@veridict.local>`;
 
     return new Promise((resolve) => {
       let resolved = false;
+      let activeSocket = null;
+
       const finish = (result) => {
         if (!resolved) {
           resolved = true;
-          try { socket.destroy(); } catch {}
+          try {
+            if (activeSocket && !activeSocket.destroyed) {
+              activeSocket.destroy();
+            }
+          } catch {}
           resolve(result);
         }
       };
 
       const socketFactory = secure ? tls.connect : net.connect;
-      const socket = socketFactory({ host, port, timeout }, () => {});
+      const socketOptions = secure
+        ? { host, port, timeout, servername: host }
+        : { host, port, timeout };
 
-      socket.setTimeout(timeout, () => {
+      activeSocket = socketFactory(socketOptions, () => {});
+
+      activeSocket.setTimeout(timeout, () => {
         finish({ success: false, reason: 'SMTP_TIMEOUT', error: `SMTP connection to ${host}:${port} timed out.` });
       });
 
-      socket.on('error', (err) => {
+      activeSocket.on('error', (err) => {
         finish({ success: false, reason: 'SMTP_ERROR', error: err.message });
       });
 
@@ -88,121 +129,282 @@ export class EmailService {
       let buffer = '';
 
       const send = (str) => {
-        if (!socket.destroyed) {
-          socket.write(str + '\r\n');
+        if (activeSocket && !activeSocket.destroyed) {
+          activeSocket.write(str + '\r\n');
         }
       };
 
-      socket.on('data', (chunk) => {
-        buffer += chunk.toString();
-        const lines = buffer.split('\r\n');
-        buffer = lines.pop(); // keep partial line
+      const setupDataListener = (s) => {
+        s.on('data', (chunk) => {
+          buffer += chunk.toString();
+          const lines = buffer.split('\r\n');
+          buffer = lines.pop(); // keep partial line
 
-        for (const line of lines) {
-          if (!line) continue;
-          const code = parseInt(line.substring(0, 3), 10);
-          const isFinal = line.charAt(3) === ' ';
+          for (const line of lines) {
+            if (!line) continue;
+            const code = parseInt(line.substring(0, 3), 10);
+            const isFinal = line.charAt(3) === ' ';
 
-          if (!isFinal) continue; // Multi-line response continuation
+            if (!isFinal) continue; // Multi-line response continuation
 
-          if (state === 'WAIT_GREETING') {
-            if (code >= 200 && code < 300) {
-              state = 'SENT_EHLO';
-              send('EHLO veridict.local');
-            } else {
-              finish({ success: false, reason: 'SMTP_GREETING_FAILED', error: line });
+            if (state === 'WAIT_GREETING') {
+              if (code >= 200 && code < 300) {
+                state = 'SENT_EHLO_1';
+                send('EHLO veridict.local');
+              } else {
+                finish({ success: false, reason: 'SMTP_GREETING_FAILED', error: line });
+              }
+            } else if (state === 'SENT_EHLO_1') {
+              if (code >= 200 && code < 300) {
+                // If not already secure, upgrade via STARTTLS (RFC 3207)
+                if (!secure) {
+                  state = 'SENT_STARTTLS';
+                  send('STARTTLS');
+                } else if (user && password) {
+                  state = 'AUTH_LOGIN';
+                  send('AUTH LOGIN');
+                } else {
+                  state = 'MAIL_FROM';
+                  send(`MAIL FROM:<${from.replace(/.*<([^>]+)>.*/, '$1')}>`);
+                }
+              } else {
+                finish({ success: false, reason: 'SMTP_EHLO_FAILED', error: line });
+              }
+            } else if (state === 'SENT_STARTTLS') {
+              if (code === 220) {
+                state = 'UPGRADING_TLS';
+                s.removeAllListeners('data');
+                s.removeAllListeners('error');
+                s.removeAllListeners('timeout');
+
+                const tlsSocket = tls.connect({
+                  socket: s,
+                  host: host,
+                  servername: host,
+                }, () => {
+                  activeSocket = tlsSocket;
+                  state = 'SENT_EHLO_2';
+                  setupDataListener(tlsSocket);
+                  send('EHLO veridict.local');
+                });
+
+                tlsSocket.setTimeout(timeout, () => {
+                  finish({ success: false, reason: 'SMTP_TIMEOUT', error: 'TLS handshake timed out.' });
+                });
+
+                tlsSocket.on('error', (err) => {
+                  finish({ success: false, reason: 'SMTP_TLS_ERROR', error: err.message });
+                });
+              } else {
+                finish({ success: false, reason: 'SMTP_STARTTLS_REJECTED', error: line });
+              }
+            } else if (state === 'SENT_EHLO_2') {
+              if (code >= 200 && code < 300) {
+                if (user && password) {
+                  state = 'AUTH_LOGIN';
+                  send('AUTH LOGIN');
+                } else {
+                  state = 'MAIL_FROM';
+                  send(`MAIL FROM:<${from.replace(/.*<([^>]+)>.*/, '$1')}>`);
+                }
+              } else {
+                finish({ success: false, reason: 'SMTP_EHLO_TLS_FAILED', error: line });
+              }
+            } else if (state === 'AUTH_LOGIN') {
+              if (code === 334) {
+                state = 'AUTH_USER';
+                send(Buffer.from(user).toString('base64'));
+              } else {
+                finish({ success: false, reason: 'SMTP_AUTH_NOT_SUPPORTED', error: line });
+              }
+            } else if (state === 'AUTH_USER') {
+              if (code === 334) {
+                state = 'AUTH_PASS';
+                send(Buffer.from(password).toString('base64'));
+              } else {
+                finish({ success: false, reason: 'SMTP_AUTH_USER_FAILED', error: line });
+              }
+            } else if (state === 'AUTH_PASS') {
+              if (code === 235) {
+                state = 'MAIL_FROM';
+                send(`MAIL FROM:<${from.replace(/.*<([^>]+)>.*/, '$1')}>`);
+              } else {
+                finish({ success: false, reason: 'SMTP_AUTH_FAILED', error: 'Invalid SMTP credentials: ' + line });
+              }
+            } else if (state === 'MAIL_FROM') {
+              if (code >= 200 && code < 300) {
+                state = 'RCPT_TO';
+                send(`RCPT TO:<${to}>`);
+              } else {
+                finish({ success: false, reason: 'SMTP_MAIL_FROM_FAILED', error: line });
+              }
+            } else if (state === 'RCPT_TO') {
+              if (code >= 200 && code < 300) {
+                state = 'DATA_CMD';
+                send('DATA');
+              } else {
+                finish({ success: false, reason: 'SMTP_RCPT_TO_FAILED', error: line });
+              }
+            } else if (state === 'DATA_CMD') {
+              if (code === 354) {
+                state = 'SEND_BODY';
+                const boundary = `----=_Part_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
+                const payload = [
+                  `From: ${from}`,
+                  `To: ${to}`,
+                  `Subject: ${subject}`,
+                  `Message-ID: ${messageId}`,
+                  `Date: ${new Date().toUTCString()}`,
+                  'MIME-Version: 1.0',
+                  `Content-Type: multipart/alternative; boundary="${boundary}"`,
+                  '',
+                  `--${boundary}`,
+                  'Content-Type: text/plain; charset=utf-8',
+                  'Content-Transfer-Encoding: 7bit',
+                  '',
+                  text || '',
+                  '',
+                  `--${boundary}`,
+                  'Content-Type: text/html; charset=utf-8',
+                  'Content-Transfer-Encoding: 7bit',
+                  '',
+                  html || `<p>${text || ''}</p>`,
+                  '',
+                  `--${boundary}--`,
+                  '',
+                  '.'
+                ].join('\r\n');
+                send(payload);
+              } else {
+                finish({ success: false, reason: 'SMTP_DATA_FAILED', error: line });
+              }
+            } else if (state === 'SEND_BODY') {
+              if (code >= 200 && code < 300) {
+                state = 'QUIT';
+                send('QUIT');
+                finish({ success: true, messageId });
+              } else {
+                finish({ success: false, reason: 'SMTP_BODY_REJECTED', error: line });
+              }
             }
-          } else if (state === 'SENT_EHLO') {
-            if (code >= 200 && code < 300) {
+          }
+        });
+      };
+
+      setupDataListener(activeSocket);
+    });
+  }
+
+  /**
+   * Safe test connection method for administrators.
+   * Performs socket handshake, STARTTLS, and AUTH LOGIN test without sending an email.
+   */
+  async testConnection() {
+    if (!this.isConfigured()) {
+      return { success: false, reason: 'SMTP_NOT_CONFIGURED', error: 'SMTP host is not configured' };
+    }
+
+    const { host, port, user, password, secure, timeout } = this._resolveConfig();
+
+    return new Promise((resolve) => {
+      let resolved = false;
+      let activeSocket = null;
+
+      const finish = (result) => {
+        if (!resolved) {
+          resolved = true;
+          try {
+            if (activeSocket && !activeSocket.destroyed) activeSocket.destroy();
+          } catch {}
+          resolve(result);
+        }
+      };
+
+      const socketFactory = secure ? tls.connect : net.connect;
+      const socketOptions = secure
+        ? { host, port, timeout, servername: host }
+        : { host, port, timeout };
+
+      activeSocket = socketFactory(socketOptions, () => {});
+      activeSocket.setTimeout(timeout, () => finish({ success: false, reason: 'SMTP_TIMEOUT', error: 'Connection timed out' }));
+      activeSocket.on('error', (err) => finish({ success: false, reason: 'SMTP_ERROR', error: err.message }));
+
+      let state = 'WAIT_GREETING';
+      let buffer = '';
+
+      const send = (str) => {
+        if (activeSocket && !activeSocket.destroyed) activeSocket.write(str + '\r\n');
+      };
+
+      const setupListener = (s) => {
+        s.on('data', (chunk) => {
+          buffer += chunk.toString();
+          const lines = buffer.split('\r\n');
+          buffer = lines.pop();
+
+          for (const line of lines) {
+            if (!line) continue;
+            const code = parseInt(line.substring(0, 3), 10);
+            if (line.charAt(3) !== ' ') continue;
+
+            if (state === 'WAIT_GREETING' && code >= 200 && code < 300) {
+              state = 'SENT_EHLO_1';
+              send('EHLO veridict.local');
+            } else if (state === 'SENT_EHLO_1' && code >= 200 && code < 300) {
+              if (!secure) {
+                state = 'SENT_STARTTLS';
+                send('STARTTLS');
+              } else if (user && password) {
+                state = 'AUTH_LOGIN';
+                send('AUTH LOGIN');
+              } else {
+                send('QUIT');
+                finish({ success: true, message: 'SMTP handshake verified (anonymous)' });
+              }
+            } else if (state === 'SENT_STARTTLS') {
+              if (code === 220) {
+                s.removeAllListeners('data');
+                s.removeAllListeners('error');
+                s.removeAllListeners('timeout');
+
+                const tlsSocket = tls.connect({ socket: s, host, servername: host }, () => {
+                  activeSocket = tlsSocket;
+                  state = 'SENT_EHLO_2';
+                  setupListener(tlsSocket);
+                  send('EHLO veridict.local');
+                });
+                tlsSocket.setTimeout(timeout, () => finish({ success: false, reason: 'SMTP_TIMEOUT', error: 'TLS timed out' }));
+                tlsSocket.on('error', (err) => finish({ success: false, reason: 'SMTP_TLS_ERROR', error: err.message }));
+              } else {
+                finish({ success: false, reason: 'SMTP_STARTTLS_FAILED', error: line });
+              }
+            } else if (state === 'SENT_EHLO_2' && code >= 200 && code < 300) {
               if (user && password) {
                 state = 'AUTH_LOGIN';
                 send('AUTH LOGIN');
               } else {
-                state = 'MAIL_FROM';
-                send(`MAIL FROM:<${from.replace(/.*<([^>]+)>.*/, '$1')}>`);
+                send('QUIT');
+                finish({ success: true, message: 'STARTTLS handshake verified' });
               }
-            } else {
-              finish({ success: false, reason: 'SMTP_EHLO_FAILED', error: line });
-            }
-          } else if (state === 'AUTH_LOGIN') {
-            if (code === 334) {
+            } else if (state === 'AUTH_LOGIN' && code === 334) {
               state = 'AUTH_USER';
               send(Buffer.from(user).toString('base64'));
-            } else {
-              finish({ success: false, reason: 'SMTP_AUTH_NOT_SUPPORTED', error: line });
-            }
-          } else if (state === 'AUTH_USER') {
-            if (code === 334) {
+            } else if (state === 'AUTH_USER' && code === 334) {
               state = 'AUTH_PASS';
               send(Buffer.from(password).toString('base64'));
-            } else {
-              finish({ success: false, reason: 'SMTP_AUTH_USER_FAILED', error: line });
-            }
-          } else if (state === 'AUTH_PASS') {
-            if (code === 235) {
-              state = 'MAIL_FROM';
-              send(`MAIL FROM:<${from.replace(/.*<([^>]+)>.*/, '$1')}>`);
-            } else {
-              finish({ success: false, reason: 'SMTP_AUTH_FAILED', error: 'Invalid SMTP credentials.' });
-            }
-          } else if (state === 'MAIL_FROM') {
-            if (code >= 200 && code < 300) {
-              state = 'RCPT_TO';
-              send(`RCPT TO:<${to}>`);
-            } else {
-              finish({ success: false, reason: 'SMTP_MAIL_FROM_FAILED', error: line });
-            }
-          } else if (state === 'RCPT_TO') {
-            if (code >= 200 && code < 300) {
-              state = 'DATA_CMD';
-              send('DATA');
-            } else {
-              finish({ success: false, reason: 'SMTP_RCPT_TO_FAILED', error: line });
-            }
-          } else if (state === 'DATA_CMD') {
-            if (code === 354) {
-              state = 'SEND_BODY';
-              const boundary = `----=_Part_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
-              const payload = [
-                `From: ${from}`,
-                `To: ${to}`,
-                `Subject: ${subject}`,
-                `Message-ID: ${messageId}`,
-                `Date: ${new Date().toUTCString()}`,
-                'MIME-Version: 1.0',
-                `Content-Type: multipart/alternative; boundary="${boundary}"`,
-                '',
-                `--${boundary}`,
-                'Content-Type: text/plain; charset=utf-8',
-                'Content-Transfer-Encoding: 7bit',
-                '',
-                text || '',
-                '',
-                `--${boundary}`,
-                'Content-Type: text/html; charset=utf-8',
-                'Content-Transfer-Encoding: 7bit',
-                '',
-                html || `<p>${text || ''}</p>`,
-                '',
-                `--${boundary}--`,
-                '',
-                '.'
-              ].join('\r\n');
-              send(payload);
-            } else {
-              finish({ success: false, reason: 'SMTP_DATA_FAILED', error: line });
-            }
-          } else if (state === 'SEND_BODY') {
-            if (code >= 200 && code < 300) {
-              state = 'QUIT';
-              send('QUIT');
-              finish({ success: true, messageId });
-            } else {
-              finish({ success: false, reason: 'SMTP_BODY_REJECTED', error: line });
+            } else if (state === 'AUTH_PASS') {
+              if (code === 235) {
+                send('QUIT');
+                finish({ success: true, message: 'SMTP authentication verified successfully!' });
+              } else {
+                finish({ success: false, reason: 'SMTP_AUTH_FAILED', error: 'Invalid credentials: ' + line });
+              }
             }
           }
-        }
-      });
+        });
+      };
+
+      setupListener(activeSocket);
     });
   }
 

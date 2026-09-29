@@ -278,7 +278,9 @@ router.post('/judges/invite', requireOrganizer, async (req, res) => {
   `).run('aud_' + crypto.randomBytes(6).toString('hex'), req.user.id, actualUserId, JSON.stringify({ email: cleanEmail, track_ids, event_id: targetEventId, invitation_id: invitationId }));
 
   const baseUrl = `${req.protocol}://${req.get('host') || 'localhost:8080'}`;
+  const emailConfigured = emailService.isConfigured();
   let emailDelivered = false;
+  let emailError = null;
   let inviteLink = `/invite/judge/${token}`;
 
   try {
@@ -290,14 +292,28 @@ router.post('/judges/invite', requireOrganizer, async (req, res) => {
       baseUrl,
     });
     emailDelivered = emailResult.success;
+    if (!emailResult.success) {
+      emailError = emailResult.error || emailResult.reason || null;
+    }
     if (emailResult.inviteUrl) inviteLink = emailResult.inviteUrl;
-  } catch (err) {}
+  } catch (err) {
+    emailError = err.message;
+  }
+
+  let message = '';
+  if (emailDelivered) {
+    message = `Invitation sent via email to ${cleanEmail}.`;
+  } else if (emailConfigured) {
+    message = `Invitation created. Email delivery could not be sent (${emailError || 'SMTP error'}).`;
+  } else {
+    message = `Invitation created. Email delivery is not configured on this host.`;
+  }
 
   res.status(201).json({
-    message: emailDelivered
-      ? `Invitation sent via email to ${cleanEmail}.`
-      : `Invitation created. Email delivery is not configured.`,
+    message,
+    emailConfigured,
     emailDelivered,
+    emailError,
     inviteLink,
     token,
     invitation: {
@@ -311,6 +327,19 @@ router.post('/judges/invite', requireOrganizer, async (req, res) => {
     },
     defaultPassword: 'judge123',
     judge: { id: actualUserId, email: cleanEmail, name: name.trim(), track_ids },
+  });
+});
+
+// GET /api/organizer/smtp-diagnostics - Check SMTP configuration and optional test connection
+router.get('/smtp-diagnostics', requireOrganizer, async (req, res) => {
+  const diag = emailService.getDiagnostics();
+  let testResult = null;
+  if (req.query.test === 'true' && diag.configured) {
+    testResult = await emailService.testConnection();
+  }
+  res.json({
+    diagnostics: diag,
+    testResult,
   });
 });
 

@@ -109,7 +109,9 @@ router.post('/register', async (req, res) => {
   });
 
   const baseUrl = `${req.protocol}://${req.get('host') || 'localhost:8080'}`;
+  const emailConfigured = emailService.isConfigured();
   let emailDelivered = false;
+  let emailError = null;
   let verificationLink = `/verify-email?token=${verificationToken}`;
 
   try {
@@ -120,17 +122,31 @@ router.post('/register', async (req, res) => {
       baseUrl,
     });
     emailDelivered = emailResult.success;
+    if (!emailResult.success) {
+      emailError = emailResult.error || emailResult.reason || null;
+    }
     if (emailResult.verifyUrl) verificationLink = emailResult.verifyUrl;
-  } catch (err) {}
+  } catch (err) {
+    emailError = err.message;
+  }
+
+  let message = '';
+  if (emailDelivered) {
+    message = 'Account created. Verification email sent.';
+  } else if (emailConfigured) {
+    message = `Account created. Verification email could not be sent (${emailError || 'SMTP error'}).`;
+  } else {
+    message = 'Account created. Verification link generated (email delivery not configured).';
+  }
 
   return res.status(201).json({
-    message: emailDelivered
-      ? 'Account created. Verification email sent.'
-      : 'Account created. Verification link generated (email delivery not configured).',
+    message,
     sessionToken: token,
     verificationToken,
     verificationLink,
+    emailConfigured,
     emailDelivered,
+    emailError,
     user: {
       id: userId,
       email: cleanEmail,
@@ -206,7 +222,9 @@ router.post('/resend-verification', async (req, res) => {
   `).run(verificationToken, verificationExpiresAt, user.id);
 
   const baseUrl = `${req.protocol}://${req.get('host') || 'localhost:8080'}`;
+  const emailConfigured = emailService.isConfigured();
   let emailDelivered = false;
+  let emailError = null;
   let verificationLink = `/verify-email?token=${verificationToken}`;
 
   try {
@@ -217,12 +235,28 @@ router.post('/resend-verification', async (req, res) => {
       baseUrl,
     });
     emailDelivered = emailResult.success;
+    if (!emailResult.success) {
+      emailError = emailResult.error || emailResult.reason || null;
+    }
     if (emailResult.verifyUrl) verificationLink = emailResult.verifyUrl;
-  } catch (err) {}
+  } catch (err) {
+    emailError = err.message;
+  }
+
+  let message = '';
+  if (emailDelivered) {
+    message = 'Verification email sent.';
+  } else if (emailConfigured) {
+    message = `Verification email could not be sent (${emailError || 'SMTP error'}).`;
+  } else {
+    message = 'Verification link generated (email delivery not configured).';
+  }
 
   return res.json({
-    message: emailDelivered ? 'Verification email sent.' : 'Verification link generated (email delivery not configured).',
+    message,
+    emailConfigured,
     emailDelivered,
+    emailError,
     verificationToken,
     verificationLink,
   });
@@ -239,9 +273,11 @@ router.post('/forgot-password', async (req, res) => {
   const cleanEmail = email.trim().toLowerCase();
   const user = db.prepare('SELECT id, name FROM users WHERE email = ?').get(cleanEmail);
 
+  const emailConfigured = emailService.isConfigured();
   let resetToken = null;
   let resetLink = null;
   let emailDelivered = false;
+  let emailError = null;
 
   if (user) {
     resetToken = 'rst_' + crypto.randomBytes(16).toString('hex');
@@ -264,13 +300,20 @@ router.post('/forgot-password', async (req, res) => {
         baseUrl,
       });
       emailDelivered = emailResult.success;
+      if (!emailResult.success) {
+        emailError = emailResult.error || emailResult.reason || null;
+      }
       if (emailResult.resetUrl) resetLink = emailResult.resetUrl;
-    } catch (err) {}
+    } catch (err) {
+      emailError = err.message;
+    }
   }
 
   return res.json({
     message: 'If an account with this email exists, password reset instructions have been generated.',
+    emailConfigured,
     emailDelivered,
+    emailError,
     resetLink: !emailDelivered && resetLink ? resetLink : undefined,
     resetToken: !emailDelivered && resetToken ? resetToken : undefined,
   });

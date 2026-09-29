@@ -72,4 +72,55 @@ describe('VERIDICT — Email Service & SMTP Abstraction Unit Tests', () => {
     assert.equal(result.success, false);
     assert.equal(result.joinUrl, 'http://localhost:8080/teams/join?code=inv_tm_99');
   });
+
+  it('7. Safe Diagnostics: getDiagnostics() never leaks secrets or passwords', () => {
+    const email = new EmailService({
+      host: 'smtp.gmail.com',
+      port: 587,
+      user: 'alice@example.com',
+      password: 'super-secret-password-1234',
+      from: 'noreply@veridict.io',
+    });
+    const diag = email.getDiagnostics();
+    assert.equal(diag.configured, true);
+    assert.equal(diag.host, 'smtp.gmail.com');
+    assert.equal(diag.port, 587);
+    assert.equal(diag.hasUser, true);
+    assert.equal(diag.hasPassword, true);
+    assert.equal(diag.secure, false);
+    // Crucial: check that the raw password string is NOT in the diagnostics
+    assert.equal(Object.keys(diag).includes('password'), false);
+    assert.equal(JSON.stringify(diag).includes('super-secret-password'), false);
+  });
+
+  it('8. Dynamic Config Resolution: Trims surrounding whitespace from env values', () => {
+    const email = new EmailService({
+      host: '  smtp.sendgrid.net  ',
+      port: ' 587 ',
+      user: ' apikey ',
+      password: ' SG.secret.token ',
+      from: ' VERIDICT <team@veridict.io> ',
+    });
+    const resolved = email._resolveConfig();
+    assert.equal(resolved.host, 'smtp.sendgrid.net');
+    assert.equal(resolved.port, 587);
+    assert.equal(resolved.user, 'apikey');
+    assert.equal(resolved.password, 'SG.secret.token');
+    assert.equal(resolved.from, 'VERIDICT <team@veridict.io>');
+  });
+
+  it('9. Security Mode Selection: Port 465 sets secure=true, Port 587 sets secure=false (STARTTLS)', () => {
+    const directTls = new EmailService({ host: 'smtp.gmail.com', port: 465 });
+    assert.equal(directTls._resolveConfig().secure, true);
+
+    const startTls = new EmailService({ host: 'smtp.gmail.com', port: 587 });
+    assert.equal(startTls._resolveConfig().secure, false);
+  });
+
+  it('10. Safe Connection Test: testConnection() fails gracefully when unconfigured without throwing', async () => {
+    const email = new EmailService({ host: '' });
+    const testResult = await email.testConnection();
+    assert.equal(testResult.success, false);
+    assert.equal(testResult.reason, 'SMTP_NOT_CONFIGURED');
+  });
 });
