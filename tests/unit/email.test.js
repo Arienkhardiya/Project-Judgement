@@ -272,4 +272,114 @@ describe('VERIDICT — Transactional Email Service (Resend HTTPS & Offline Abstr
     assert.equal(testResult.success, false);
     assert.equal(testResult.reason, 'EMAIL_NOT_CONFIGURED');
   });
+
+  it('16. Resend HTTPS API Mock: Templated Password Reset invokes Resend with correct payload', async () => {
+    const originalFetch = globalThis.fetch;
+    let capturedOptions = null;
+
+    globalThis.fetch = async (url, options) => {
+      capturedOptions = options;
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ id: 'res_pwd_reset_msg_101' }),
+      };
+    };
+
+    try {
+      const email = new EmailService({ apiKey: 're_test_key_abc' });
+      const result = await email.sendPasswordResetEmail({
+        email: 'organizer@veridict.io',
+        name: 'Lead Organizer',
+        token: 'rst_tok_112233',
+        baseUrl: 'https://verdict-production-5a56.up.railway.app',
+      });
+
+      assert.equal(result.success, true);
+      assert.equal(result.provider, 'resend');
+      assert.equal(result.messageId, 'res_pwd_reset_msg_101');
+      assert.equal(result.resetUrl, 'https://verdict-production-5a56.up.railway.app/reset-password?token=rst_tok_112233');
+
+      const payload = JSON.parse(capturedOptions.body);
+      assert.deepEqual(payload.to, ['organizer@veridict.io']);
+      assert.ok(/Reset your VERIDICT Password/i.test(payload.subject));
+      assert.ok(payload.html.includes('rst_tok_112233'));
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it('17. Resend HTTPS API Mock: Templated Judge Invitation invokes Resend with correct payload', async () => {
+    const originalFetch = globalThis.fetch;
+    let capturedOptions = null;
+
+    globalThis.fetch = async (url, options) => {
+      capturedOptions = options;
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ id: 'res_judge_invite_msg_202' }),
+      };
+    };
+
+    try {
+      const email = new EmailService({ apiKey: 're_test_key_abc' });
+      const result = await email.sendJudgeInvitationEmail({
+        email: 'judge@veridict.io',
+        name: 'Judge Judy',
+        eventName: 'AI Global Hackathon',
+        token: 'tok_judge_778899',
+        baseUrl: 'https://verdict-production-5a56.up.railway.app',
+      });
+
+      assert.equal(result.success, true);
+      assert.equal(result.provider, 'resend');
+      assert.equal(result.messageId, 'res_judge_invite_msg_202');
+      assert.equal(result.inviteUrl, 'https://verdict-production-5a56.up.railway.app/invite/judge/tok_judge_778899');
+
+      const payload = JSON.parse(capturedOptions.body);
+      assert.deepEqual(payload.to, ['judge@veridict.io']);
+      assert.ok(payload.subject.includes('AI Global Hackathon'));
+      assert.ok(payload.html.includes('tok_judge_778899'));
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it('18. Resend HTTPS API Mock: Templated Team Invitation invokes Resend with correct payload', async () => {
+    const originalFetch = globalThis.fetch;
+    let capturedOptions = null;
+
+    globalThis.fetch = async (url, options) => {
+      capturedOptions = options;
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ id: 'res_team_invite_msg_303' }),
+      };
+    };
+
+    try {
+      const email = new EmailService({ apiKey: 're_test_key_abc' });
+      const result = await email.sendTeamInvitationEmail({
+        email: 'teammate@veridict.io',
+        teamName: 'Neural Ninjas',
+        eventName: 'AI Global Hackathon',
+        inviteCode: 'code_team_5544',
+        baseUrl: 'https://verdict-production-5a56.up.railway.app',
+      });
+
+      assert.equal(result.success, true);
+      assert.equal(result.provider, 'resend');
+      assert.equal(result.messageId, 'res_team_invite_msg_303');
+      assert.equal(result.joinUrl, 'https://verdict-production-5a56.up.railway.app/teams/join?code=code_team_5544');
+
+      const payload = JSON.parse(capturedOptions.body);
+      assert.deepEqual(payload.to, ['teammate@veridict.io']);
+      assert.ok(payload.subject.includes('Neural Ninjas'));
+      assert.ok(payload.html.includes('code_team_5544'));
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
 });
