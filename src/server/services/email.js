@@ -3,6 +3,18 @@ import tls from 'node:tls';
 import crypto from 'node:crypto';
 
 /**
+ * Robustly unpacks error strings, codes, and AggregateError arrays from Node.js sockets.
+ */
+function extractErrorMessage(err) {
+  if (!err) return 'Unknown socket error';
+  if (Array.isArray(err.errors) && err.errors.length > 0) {
+    const messages = err.errors.map(e => e?.message || e?.code || String(e)).filter(Boolean);
+    if (messages.length > 0) return messages.join('; ');
+  }
+  return err.message || err.code || String(err) || 'Unknown socket error';
+}
+
+/**
  * VERIDICT Email Service Layer
  * 
  * Supports standard RFC 5321 / RFC 3207 self-hosted and cloud SMTP configurations:
@@ -112,8 +124,8 @@ export class EmailService {
 
       const socketFactory = secure ? tls.connect : net.connect;
       const socketOptions = secure
-        ? { host, port, timeout, servername: host }
-        : { host, port, timeout };
+        ? { host, port, timeout, servername: host, family: 4 }
+        : { host, port, timeout, family: 4 };
 
       activeSocket = socketFactory(socketOptions, () => {});
 
@@ -122,7 +134,8 @@ export class EmailService {
       });
 
       activeSocket.on('error', (err) => {
-        finish({ success: false, reason: 'SMTP_ERROR', error: err.message });
+        const errMsg = extractErrorMessage(err);
+        finish({ success: false, reason: 'SMTP_ERROR', error: errMsg });
       });
 
       let state = 'WAIT_GREETING';
@@ -177,6 +190,10 @@ export class EmailService {
                 s.removeAllListeners('error');
                 s.removeAllListeners('timeout');
 
+                s.on('error', (err) => {
+                  finish({ success: false, reason: 'SMTP_ERROR', error: extractErrorMessage(err) });
+                });
+
                 const tlsSocket = tls.connect({
                   socket: s,
                   host: host,
@@ -193,7 +210,8 @@ export class EmailService {
                 });
 
                 tlsSocket.on('error', (err) => {
-                  finish({ success: false, reason: 'SMTP_TLS_ERROR', error: err.message });
+                  const errMsg = extractErrorMessage(err);
+                  finish({ success: false, reason: 'SMTP_TLS_ERROR', error: errMsg });
                 });
               } else {
                 finish({ success: false, reason: 'SMTP_STARTTLS_REJECTED', error: line });
@@ -299,12 +317,14 @@ export class EmailService {
    * Safe test connection method for administrators.
    * Performs socket handshake, STARTTLS, and AUTH LOGIN test without sending an email.
    */
-  async testConnection() {
-    if (!this.isConfigured()) {
+  async testConnection(overrideConfig = {}) {
+    if (!this.isConfigured() && !overrideConfig.host) {
       return { success: false, reason: 'SMTP_NOT_CONFIGURED', error: 'SMTP host is not configured' };
     }
 
-    const { host, port, user, password, secure, timeout } = this._resolveConfig();
+    const baseCfg = this._resolveConfig();
+    const cfg = { ...baseCfg, ...overrideConfig };
+    const { host, port, user, password, secure, timeout } = cfg;
 
     return new Promise((resolve) => {
       let resolved = false;
@@ -322,12 +342,15 @@ export class EmailService {
 
       const socketFactory = secure ? tls.connect : net.connect;
       const socketOptions = secure
-        ? { host, port, timeout, servername: host }
-        : { host, port, timeout };
+        ? { host, port, timeout, servername: host, family: 4 }
+        : { host, port, timeout, family: 4 };
 
       activeSocket = socketFactory(socketOptions, () => {});
       activeSocket.setTimeout(timeout, () => finish({ success: false, reason: 'SMTP_TIMEOUT', error: 'Connection timed out' }));
-      activeSocket.on('error', (err) => finish({ success: false, reason: 'SMTP_ERROR', error: err.message }));
+      activeSocket.on('error', (err) => {
+        const errMsg = extractErrorMessage(err);
+        finish({ success: false, reason: 'SMTP_ERROR', error: errMsg });
+      });
 
       let state = 'WAIT_GREETING';
       let buffer = '';
@@ -367,6 +390,10 @@ export class EmailService {
                 s.removeAllListeners('error');
                 s.removeAllListeners('timeout');
 
+                s.on('error', (err) => {
+                  finish({ success: false, reason: 'SMTP_ERROR', error: extractErrorMessage(err) });
+                });
+
                 const tlsSocket = tls.connect({ socket: s, host, servername: host }, () => {
                   activeSocket = tlsSocket;
                   state = 'SENT_EHLO_2';
@@ -374,7 +401,10 @@ export class EmailService {
                   send('EHLO veridict.local');
                 });
                 tlsSocket.setTimeout(timeout, () => finish({ success: false, reason: 'SMTP_TIMEOUT', error: 'TLS timed out' }));
-                tlsSocket.on('error', (err) => finish({ success: false, reason: 'SMTP_TLS_ERROR', error: err.message }));
+                tlsSocket.on('error', (err) => {
+                  const errMsg = extractErrorMessage(err);
+                  finish({ success: false, reason: 'SMTP_TLS_ERROR', error: errMsg });
+                });
               } else {
                 finish({ success: false, reason: 'SMTP_STARTTLS_FAILED', error: line });
               }

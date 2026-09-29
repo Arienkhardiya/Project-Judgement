@@ -335,7 +335,10 @@ router.get('/smtp-diagnostics', requireOrganizer, async (req, res) => {
   const diag = emailService.getDiagnostics();
   let testResult = null;
   if (req.query.test === 'true' && diag.configured) {
-    testResult = await emailService.testConnection();
+    const override = {};
+    if (req.query.port) override.port = Number(req.query.port);
+    if (req.query.secure !== undefined) override.secure = req.query.secure === 'true';
+    testResult = await emailService.testConnection(override);
   }
   res.json({
     diagnostics: diag,

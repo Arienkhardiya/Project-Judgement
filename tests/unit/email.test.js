@@ -123,4 +123,13 @@ describe('VERIDICT — Email Service & SMTP Abstraction Unit Tests', () => {
     assert.equal(testResult.success, false);
     assert.equal(testResult.reason, 'SMTP_NOT_CONFIGURED');
   });
+
+  it('11. Connection Test Overrides: Supports testing alternative ports and security settings', async () => {
+    const email = new EmailService({ host: 'smtp.gmail.com', port: 587 });
+    // Overriding unconfigured host
+    const offlineEmail = new EmailService({ host: '' });
+    const res = await offlineEmail.testConnection({ host: '' });
+    assert.equal(res.success, false);
+    assert.equal(res.reason, 'SMTP_NOT_CONFIGURED');
+  });
 });
