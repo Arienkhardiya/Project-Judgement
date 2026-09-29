@@ -1,7 +1,8 @@
-﻿import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
+import OrganizerPairwiseView from './OrganizerPairwiseView.jsx';
 
 export default function OrganizerPortal({ user }) {
-  const [subTab, setSubTab] = useState('dashboard'); // 'dashboard', 'normalized', 'audit', 'events', 'voting', 'moderation'
+  const [subTab, setSubTab] = useState('dashboard'); // 'dashboard', 'normalized', 'pairwise', 'audit', 'events', 'voting', 'moderation'
   const [dashboardData, setDashboardData] = useState(null);
   const [normalizedData, setNormalizedData] = useState(null);
   const [auditLogs, setAuditLogs] = useState([]);
@@ -196,6 +197,7 @@ export default function OrganizerPortal({ user }) {
     setSuccess(null);
     if (tab === 'dashboard') loadDashboard();
     else if (tab === 'normalized') loadNormalized();
+    else if (tab === 'pairwise') { /* OrganizerPairwiseView loads on mount */ }
     else if (tab === 'audit') loadAudit();
     else if (tab === 'events') loadEvents();
     else if (tab === 'voting') {
@@ -343,6 +345,14 @@ export default function OrganizerPortal({ user }) {
         >
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
           Cross-Judge Normalization
+        </button>
+        <button
+          type="button"
+          className={`subtab-btn ${subTab === 'pairwise' ? 'active' : ''}`}
+          onClick={() => handleSubTabChange('pairwise')}
+        >
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><path d="M10 7h4v4"/></svg>
+          Pairwise Mode (Bonus B)
         </button>
         <button
           type="button"
@@ -676,6 +686,18 @@ export default function OrganizerPortal({ user }) {
             </div>
           )}
         </div>
+      )}
+
+      {/* ===================================================================
+          SUBTAB: PAIRWISE COMPARISONS & BRADLEY-TERRY (BONUS B)
+          =================================================================== */}
+      {subTab === 'pairwise' && (
+        <OrganizerPairwiseView
+          user={user}
+          selectedEventId={selectedEventId}
+          events={events}
+          eventDetails={eventDetails}
+        />
       )}
 
       {/* ===================================================================
