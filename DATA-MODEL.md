@@ -212,6 +212,41 @@ This design guarantees:
 | `webhook_deliveries` | `status_code` | INTEGER | | HTTP status code received (0 on network fail) |
 | `webhook_deliveries` | `delivered_at` | TEXT | NOT NULL | Delivery UTC timestamp |
 
+#### `pairwise_pairs` (Bonus B)
+| Column | Type | Constraints | Description |
+|---|---|---|---|
+| `id` | TEXT | PRIMARY KEY | Unique pair assignment identifier (`pwp_...`) |
+| `event_id` | TEXT | NOT NULL, FK `events(id)` | Associated hackathon event |
+| `judge_user_id` | TEXT | NOT NULL, FK `users(id)` | Assigned evaluating judge |
+| `project_a_id` | TEXT | NOT NULL, FK `projects(id)` | First project in canonical comparison pair |
+| `project_b_id` | TEXT | NOT NULL, FK `projects(id)` | Second project in canonical comparison pair |
+| `track_id` | TEXT | FK `tracks(id)` | Competition track (NULL for cross-track) |
+| `status` | TEXT | NOT NULL DEFAULT 'PENDING' | 'PENDING', 'COMPLETED' |
+| `created_at` | TEXT | NOT NULL | UTC creation timestamp |
+*Constraints:*
+- `CHECK(project_a_id < project_b_id)` strictly enforces canonical ordering.
+- `UNIQUE(judge_user_id, project_a_id, project_b_id)` guarantees at most one assignment of a project pair per judge.
+
+#### `pairwise_comparisons` (Bonus B)
+| Column | Type | Constraints | Description |
+|---|---|---|---|
+| `id` | TEXT | PRIMARY KEY | Unique comparison evaluation receipt (`pwc_...`) |
+| `pair_id` | TEXT | FK `pairwise_pairs(id)` | Originating pair assignment |
+| `event_id` | TEXT | NOT NULL, FK `events(id)` | Associated hackathon event |
+| `judge_user_id` | TEXT | NOT NULL, FK `users(id)` | Authenticated judge who authored comparison |
+| `project_a_id` | TEXT | NOT NULL, FK `projects(id)` | First project (must match canonical ordering) |
+| `project_b_id` | TEXT | NOT NULL, FK `projects(id)` | Second project (must match canonical ordering) |
+| `winner_id` | TEXT | FK `projects(id)` | Winner ID (or NULL if tie) |
+| `is_tie` | INTEGER | NOT NULL DEFAULT 0 | 1 if tie, 0 if decisive winner |
+| `comment` | TEXT | DEFAULT '' | Qualitative comparison commentary |
+| `created_at` | TEXT | NOT NULL | UTC comparison submission timestamp |
+*Constraints:*
+- `CHECK(project_a_id < project_b_id)` strictly preserves canonical pair orientation.
+- `CHECK((is_tie = 1 AND winner_id IS NULL) OR (is_tie = 0 AND winner_id IS NOT NULL AND (winner_id = project_a_id OR winner_id = project_b_id)))` enforces relational consistency between tie status and winner identity.
+- `UNIQUE(judge_user_id, project_a_id, project_b_id)` prevents duplicate comparisons for the same pair.
+
+
+
 
 ---
 

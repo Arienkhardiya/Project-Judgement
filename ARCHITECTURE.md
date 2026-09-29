@@ -30,8 +30,8 @@ The platform is designed as an air-gapped, self-contained monolithic service opt
 |  |   - /api/auth (Local server-side sessions, password hashing, switch-seeded) |  |
 |  |   - /api/events (Event management, tracks, prizes, deadline validation)     |  |
 |  |   - /api/teams (Team formation, invite links, roster membership)            |  |
-|  |   - /api/judge (Assigned queue, rubric scoring, judge isolation barrier)    |  |
-|  |   - /api/organizer (Dashboard metrics, normalization, CSV export, audit)    |  |
+|  |   - /api/judge (Assigned queue, rubric scoring, pairwise comparison, isolation) |  |
+|  |   - /api/organizer (Dashboard metrics, normalization, pairwise, export, audit)  |  |
 |  +-----------------------------------------------------------------------------+  |
 |  | Middleware Pipeline:                                                        |  |
 |  |   - cookieParser() -> sessionMiddleware -> RBAC Guards                      |  |
@@ -42,6 +42,7 @@ The platform is designed as an air-gapped, self-contained monolithic service opt
 |  |   - Deadline Engine: UTC timestamp validation against submissions_close     |  |
 |  |   - Judging Engine: Track-aware assignment, immutable rubric enforcement     |  |
 |  |   - Normalization Engine: Empirical Bayes regularized Z-score model         |  |
+|  |   - Pairwise Engine: Circulant chord generator & Bradley-Terry MM solver    |  |
 |  |   - CSV Streamer: RFC 4180 compliant escaping with stable columns            |  |
 |  +-----------------------------------------------------------------------------+  |
 |  | Persistence Layer: Native node:sqlite (DatabaseSync / SQLite 3.53)          |  |
@@ -166,4 +167,53 @@ The system enforces strict server-side authorization:
 5. **Bulk Data Portability & Archival (T4):**
    - **Signed Bulk Export (`GET /api/export.json`, `GET /api/organizer/export.json`):** Allows organizers to export the complete state of the event (event metadata, tracks, prizes, teams, projects, rubrics, criteria, assignments, scores, and normalized rankings). The entire export bundle is digitally signed with the server's Ed25519 authority key.
    - **Transactional Bulk Import (`POST /api/organizer/import.json`):** Allows organizers to import complete datasets (supporting both the official `fixtures.json` format and full export bundles). The import runs within an atomic SQLite transaction (`BEGIN TRANSACTION` / `COMMIT`), ensuring foreign key integrity and user email conflict resolution.
+
+---
+
+## 8. Bonus B — Pairwise Mode Architecture
+
+The Pairwise Comparison Mode provides a decoupled, complementary evaluation path running inside the monolithic architecture.
+
+```
++-----------------------------------------------------------------------------------+
+|                           PAIRWISE ARCHITECTURE FLOW                              |
++-----------------------------------------------------------------------------------+
+|                                                                                   |
+|  [ Presentation Layer: React 19 UI ]                                              |
+|  - JudgePairwiseView: Side-by-side comparison cards (Project A vs Project B)      |
+|  - OrganizerPairwiseView: Dispatch schedule generation, track filters, rankings   |
+|                                                                                   |
+|                                | HTTP REST APIs (JSON / Cookie)                   |
+|                                v                                                  |
+|                                                                                   |
+|  [ Application Layer: Express 5 Routes ]                                          |
+|  - /api/judge/pairwise/assignments        (Fetch assigned comparison pairs)       |
+|  - /api/judge/pairwise/assignments/:id    (Fetch single pair details)             |
+|  - /api/judge/pairwise/comparisons        (Submit comparison / view submissions)  |
+|  - /api/organizer/pairwise/assignments/generate (Circulant chord scheduling)      |
+|  - /api/organizer/pairwise/status         (Real-time completion metrics)          |
+|  - /api/organizer/pairwise/rankings       (Bradley-Terry solver execution)        |
+|                                                                                   |
+|                                |                                                  |
+|                                v                                                  |
+|                                                                                   |
+|  [ Domain Services: src/server/services/pairwise.js ]                             |
+|  - generatePairAssignments: k-regular circulant chord graph topology              |
+|  - calculatePairwiseRanking: MM (Hunter 2004) solver with anchor prior            |
+|                                                                                   |
+|                                | Prepared SQL Statements                          |
+|                                v                                                  |
+|                                                                                   |
+|  [ Relational Persistence Layer: SQLite ]                                         |
+|  - pairwise_pairs: Canonical (project_a_id < project_b_id), UNIQUE per judge       |
+|  - pairwise_comparisons: CHECK (winner in A, B or NULL if tie), UNIQUE per judge   |
++-----------------------------------------------------------------------------------+
+```
+
+### Authorization Boundaries & Peer Isolation
+1. **Server-Side Identity:** The calling judge’s identity is bound strictly from the session cookie or bearer token (`req.user.id`).
+2. **Probing Parameter Neutralization:** Queries attempting to probe peer evaluations (`?judge=...`, `?judge_id=...`, etc.) on `/api/judge/pairwise/assignments` and `/api/judge/pairwise/comparisons` are intercepted by the isolation barrier and rejected with `HTTP 403 Forbidden`.
+3. **Queue Ownership:** Judges cannot retrieve or submit comparisons for pairs assigned to another judge (`HTTP 403 Forbidden`).
+4. **Duplicate Comparison Protection:** The SQLite schema enforces `UNIQUE(pair_id)` and `UNIQUE(judge_user_id, project_a_id, project_b_id)`, immediately returning `HTTP 409 Conflict` on replay attacks.
+5. **Non-Disruptive Coexistence:** Pairwise Mode operates on separate tables and endpoints without modifying or mutating existing rubric definitions, absolute scores, or the primary T2 normalization pipeline.
 

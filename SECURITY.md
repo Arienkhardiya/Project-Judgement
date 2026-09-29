@@ -10,7 +10,7 @@ The DOGFOOD 2026 platform is an air-gapped, self-hosted, multi-tenant web applic
 
 The platform enforces the following core security objectives:
 
-1. **Judge Confidentiality & Peer Isolation:** Complete isolation of individual judge scores and comments from peer judges, participants, and visitors.
+1. **Judge Confidentiality & Peer Isolation:** Complete isolation of individual judge scores, pairwise comparison assignments, and evaluation comments from peer judges, participants, and visitors.
 2. **Role-Based Access Separation (RBAC):** Strict operational boundaries separating Visitors, Participants, Judges, and Organizers/Administrators.
 3. **Score & Rubric Integrity:** Cryptographic immutability of scoring criteria once active evaluation begins, coupled with deterministic mathematical normalization.
 4. **Community Voting Integrity:** Elimination of first-entry positional bias, enforcement of exactly one vote per authenticated voter per event, strict prevention of team self-voting, and blind voting windows that suppress herd behavior.
@@ -552,6 +552,9 @@ The platform's security controls are comprehensively validated across **81 autom
 - `tests/unit/csv.test.js`: Validates RFC 4180 escaping and CWE-1236 formula injection neutralization.
 - `tests/unit/rate_limit.test.js`: Validates sliding-window velocity throttling across production and test environments.
 - `tests/unit/normalization.test.js`: Validates zero-variance resilience, single-review stability, and deterministic tie-breaking.
+- `tests/unit/pairwise.test.js`: Validates Bradley-Terry MM solver convergence, 0.5 half-win tie splitting, virtual anchor prior regularization, and deterministic tie-breaking.
+- `tests/unit/pairwise_persistence.test.js`: Validates relational schema integrity, canonical order constraints ($A < B$), winner integrity, and UNIQUE pair constraints.
+- `tests/integration/pairwise_api.test.js`: Validates end-to-end judge and organizer pairwise workflows, peer-probing parameter neutralization (403), duplicate submission rejection (409), and circulant assignment scheduling.
 
 ---
 

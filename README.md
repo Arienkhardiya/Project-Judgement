@@ -7,8 +7,8 @@ A high-integrity, production-grade hackathon submission and judging platform eng
 ## Current Status: Verified Tier 1 & Tier 2 + Implemented Tier 3 & Tier 4 Extensions
 
 - **Claimed Tiers:** `T1`, `T2`, `T3`, `T4`
-- **Extended Tiers:** `T3` (Community Voting & Anti-Abuse) + `T4` (Verifiable Records & Webhooks)
-- **Automated Tests:** 81/81 automated tests passing
+- **Extended Tiers & Bonuses:** `T3` (Community Voting & Anti-Abuse) + `T4` (Verifiable Records & Webhooks) + `Bonus B` (Pairwise Mode & Bradley-Terry Solver)
+- **Automated Tests:** 134/134 automated tests passing
 - **Docker Deployment:** Verified on Docker Engine 29.8.0 & Docker Compose v5.5.1
 - **Official Acceptance Output (`acceptance-report.txt`):**
   ```
@@ -38,6 +38,7 @@ A high-integrity, production-grade hackathon submission and judging platform eng
 - **Database:** SQLite with foreign keys and WAL mode via native `node:sqlite` (`DatabaseSync`), requiring zero external native compilation or C++ build tools.
 - **Judging Integrity:** Strict server-side authorization barrier ensuring judges cannot view peer ballots. Participant role blocking on all judge APIs.
 - **Normalization:** Deterministic Empirical Bayes regularized Z-score model handling zero-variance judges (e.g. `jdg_07`), varying sample sizes, and missing reviews.
+- **Pairwise Mode (Bonus B):** Additive head-to-head comparison judging featuring a $k$-regular circulant chord graph scheduler and Minorization-Maximization (MM / Hunter 2004) regularized Bradley-Terry solver with 0.5 half-win tie splitting and Bayesian virtual anchor prior.
 - **Community Voting (T3):** Randomized ballot generation per voter to defeat positional ordering bias, blind voting window holding results until window closes, and anti-abuse safeguards (strict self-voting prohibition, 1 vote per user per event, velocity rate-limiting).
 - **Verifiable Records (T4):** HMAC-SHA256 tamper-proof audit receipts, verifiable project certificates, webhook notifications, and embeddable gallery widget.
 - **Data Parity:** Faithful ingestion of the complete real `fixtures.json` (41 projects, 30 judges, 8 tracks, 40 teams, 126 scores) preserving all edge cases (duplicate team projects `tm_07`, zero-variance judge `jdg_07`, incomplete review sets, empty comments).
@@ -48,7 +49,9 @@ A high-integrity, production-grade hackathon submission and judging platform eng
 
 - [ARCHITECTURE.md](ARCHITECTURE.md) - System architecture, data flow, authorization boundaries, and tradeoffs.
 - [DATA-MODEL.md](DATA-MODEL.md) - Relational schema, tables, foreign keys, constraints, and import/export paths.
-- [JUDGING.md](JUDGING.md) - Mathematical normalization equations, zero-variance proofs, and isolation mechanics.
+- [JUDGING.md](JUDGING.md) - Mathematical normalization equations, zero-variance proofs, Pairwise Bradley-Terry formulation, and isolation mechanics.
+- [API.md](API.md) - API-first REST reference, OpenAPI 3.1 contract, authentication, and examples.
+- [SECURITY.md](SECURITY.md) - Formal threat model, STRIDE analysis, and trust boundary protections.
 - [acceptance-report.txt](acceptance-report.txt) - Official raw acceptance output from `run.py`.
 - [.dogfood.toml](.dogfood.toml) - Portal routing and auth configuration.
 
@@ -158,6 +161,11 @@ pnpm test
 | **T4: Digital Certificates** | Cryptographically signed project submission certificates (`/api/verify/certificate/:id`) | Verified |
 | **T4: Webhooks Integration** | Event-driven webhooks system with signed payloads for external integrations | Verified |
 | **T4: Embeddable Gallery** | Lightweight iframe widget (`/embed/gallery`) for embedding hackathon showcases | Verified |
+| **Bonus B: Pairwise Data Model** | Relational `pairwise_pairs` and `pairwise_comparisons` with canonical ordering and winner integrity | Verified |
+| **Bonus B: Bradley-Terry Solver** | Deterministic MM solver with 0.5 half-win tie splitting and Bayesian virtual anchor prior | Verified |
+| **Bonus B: Circulant Assignment Engine** | $k$-regular circulant chord graph topology balancing judge loads (~4-6 comparisons/project) | Verified |
+| **Bonus B: Judge Pairwise UI** | Dedicated side-by-side evaluation interface with Winner/Tie selection and peer isolation guards | Verified |
+| **Bonus B: Organizer Pairwise UI** | Control plane for schedule generation, live completion tracking, and instant ranking computation | Verified |
 
 ---
 

@@ -104,9 +104,11 @@ Access control is enforced strictly on the server side via Express middleware fu
 | **Project Submission & Editing** (`/api/projects`, `/projects/new`) | - | Yes | - | Yes | Yes |
 | **Post Comments & Flagging** (`/api/projects/:id/comments`) | - | Yes | Yes | Yes | Yes |
 | **Cast Community Vote** (`/api/voting/vote`) | - | Yes | Yes | Yes | Yes |
-| **Judge Assignments & Scoring** (`/api/judge/*`) | - | - | Yes | Yes | Yes |
+| **Judge Assignments & Scoring (T2)** (`/api/judge/scores`, `/api/judge/assignments`) | - | - | Yes | Yes | Yes |
+| **Judge Pairwise Mode (Bonus B)** (`/api/judge/pairwise/*`) | - | - | Yes | Yes | Yes |
 | **Judging Progress Dashboard** (`/api/organizer/dashboard`) | - | - | - | Yes | Yes |
-| **Normalized Results Calculation** (`/api/organizer/normalized`) | - | - | - | Yes | Yes |
+| **Normalized Results Calculation (T2)** (`/api/organizer/normalized`) | - | - | - | Yes | Yes |
+| **Pairwise Control Plane (Bonus B)** (`/api/organizer/pairwise/*`) | - | - | - | Yes | Yes |
 | **CSV & Signed JSON Exports** (`/api/organizer/export.*`) | - | - | - | Yes | Yes |
 | **Bulk Import (Atomic)** (`/api/organizer/import.json`) | - | - | - | Yes | Yes |
 | **Audit Logs Inspection** (`/api/organizer/audit`) | - | - | - | Yes | Yes |
@@ -511,6 +513,142 @@ Access control is enforced strictly on the server side via Express middleware fu
   ```
 - **Errors**: `400 Bad Request` (criterion out of range), `403 Forbidden` (not assigned to project), `500 Internal Server Error` (no active rubric).
 
+#### `GET /api/judge/pairwise/assignments`
+- **Purpose**: List pairwise project pairs assigned to the calling judge for evaluation.
+- **Security Barrier**: **Judge Peer Isolation**. Probing peer judge assignments via query parameters (`?judge=...`, `?judge_id=...`, `?target=...`, etc.) is strictly blocked with `403 Forbidden`.
+- **Authentication**: Required
+- **Role**: `judge`, `organizer`, `admin`
+- **Success Response (200 OK)**:
+  ```json
+  {
+    "judge_id": "usr_jdg_01",
+    "judge_name": "Dr. Jane Smith",
+    "pairs": [
+      {
+        "pair_id": "pwp_a1b2c3d4",
+        "event_id": "evt_01",
+        "track_id": "trk_01",
+        "pair_status": "PENDING",
+        "created_at": "2026-03-01T12:00:00.000Z",
+        "project_a_id": "prj_01",
+        "project_b_id": "prj_02",
+        "project_a_title": "Project Alpha",
+        "project_a_summary": "High-throughput data broker",
+        "team_a_name": "Team One",
+        "project_b_title": "Project Beta",
+        "project_b_summary": "Distributed sensor hub",
+        "team_b_name": "Team Two",
+        "comparison_id": null,
+        "winner_id": null,
+        "is_tie": null,
+        "comment": null
+      }
+    ]
+  }
+  ```
+- **Errors**: `403 Forbidden` if attempting to view peer assignments.
+
+#### `GET /api/judge/pairwise/assignments/:pairId`
+- **Purpose**: Retrieve full side-by-side details for a single assigned comparison pair (including full project descriptions, repo URLs, live demo links, and existing comparison if already submitted).
+- **Authentication**: Required
+- **Role**: `judge`, `organizer`, `admin`
+- **Success Response (200 OK)**:
+  ```json
+  {
+    "pair": {
+      "pair_id": "pwp_a1b2c3d4",
+      "judge_user_id": "usr_jdg_01",
+      "event_id": "evt_01",
+      "track_id": "trk_01",
+      "pair_status": "PENDING",
+      "created_at": "2026-03-01T12:00:00.000Z",
+      "project_a_id": "prj_01",
+      "project_b_id": "prj_02",
+      "project_a_title": "Project Alpha",
+      "project_a_summary": "High-throughput data broker",
+      "project_a_description": "Comprehensive distributed log system...",
+      "project_a_repo_url": "https://github.com/example/alpha",
+      "project_a_demo_url": "https://alpha.demo",
+      "team_a_name": "Team One",
+      "project_b_title": "Project Beta",
+      "project_b_summary": "Distributed sensor hub",
+      "project_b_description": "Telemetry collection mesh...",
+      "project_b_repo_url": "https://github.com/example/beta",
+      "project_b_demo_url": "https://beta.demo",
+      "team_b_name": "Team Two",
+      "comparison_id": null,
+      "winner_id": null,
+      "is_tie": null,
+      "comment": null
+    }
+  }
+  ```
+- **Errors**: `403 Forbidden` (caller is not assigned to this pair), `404 Not Found` (pair does not exist).
+
+#### `POST /api/judge/pairwise/comparisons`
+- **Purpose**: Record a pairwise head-to-head comparison evaluation. Validates that caller is assigned to the pair, checks winner vs tie consistency, creates comparison record, updates pair status to `COMPLETED`, and writes an audit log.
+- **Authentication**: Required
+- **Role**: `judge`, `organizer`, `admin`
+- **Request Body (Decisive Winner)**:
+  ```json
+  {
+    "pair_id": "pwp_a1b2c3d4",
+    "winner_id": "prj_01",
+    "is_tie": false,
+    "comment": "Project A demonstrated significantly better reliability."
+  }
+  ```
+- **Request Body (Tie)**:
+  ```json
+  {
+    "pair_id": "pwp_a1b2c3d4",
+    "winner_id": null,
+    "is_tie": true,
+    "comment": "Both projects achieved comparable depth and maturity."
+  }
+  ```
+- **Success Response (201 Created)**:
+  ```json
+  {
+    "message": "Comparison recorded successfully",
+    "comparison_id": "pwc_9f1a2b",
+    "pair_id": "pwp_a1b2c3d4"
+  }
+  ```
+- **Errors**:
+  - `400 Bad Request`: Missing `pair_id`, invalid `is_tie`, winner specified during tie, missing winner during non-tie, or `winner_id` not belonging to either Project A or Project B.
+  - `403 Forbidden`: Caller is not assigned to this comparison pair.
+  - `404 Not Found`: Pair assignment not found.
+  - `409 Conflict`: Comparison already submitted for this pair.
+
+#### `GET /api/judge/pairwise/comparisons`
+- **Purpose**: List comparisons submitted by the calling judge.
+- **Security Barrier**: **Judge Peer Isolation**. Probing peer judge comparisons via query parameters (`?judge=...`, etc.) is strictly blocked with `403 Forbidden`.
+- **Authentication**: Required
+- **Role**: `judge`, `organizer`, `admin`
+- **Success Response (200 OK)**:
+  ```json
+  {
+    "judge_id": "usr_jdg_01",
+    "comparisons": [
+      {
+        "comparison_id": "pwc_9f1a2b",
+        "pair_id": "pwp_a1b2c3d4",
+        "event_id": "evt_01",
+        "project_a_id": "prj_01",
+        "project_b_id": "prj_02",
+        "winner_id": "prj_01",
+        "is_tie": 0,
+        "comment": "Project A demonstrated significantly better reliability.",
+        "created_at": "2026-03-01T14:00:00.000Z",
+        "project_a_title": "Project Alpha",
+        "project_b_title": "Project Beta"
+      }
+    ]
+  }
+  ```
+- **Errors**: `403 Forbidden` if attempting to view peer comparisons.
+
 ---
 
 ### 6. Organizer
@@ -627,6 +765,101 @@ Access control is enforced strictly on the server side via Express middleware fu
 - **Authentication**: Required
 - **Role**: `organizer`, `admin`
 - **Success Response (200 OK)**: `{ message: "Rubric updated successfully" }`.
+
+#### `POST /api/organizer/pairwise/assignments/generate` *(or `/api/pairwise/assignments/generate`)*
+- **Purpose**: Algorithmic pairwise assignment generation using a $k$-regular circulant chord graph topology. Enforces canonical pair orientation ($A < B$), balances assignment loads across available judges, and logs an audit receipt.
+- **Authentication**: Required
+- **Role**: `organizer`, `admin`
+- **Request Body**:
+  ```json
+  {
+    "event_id": "evt_01",
+    "track_id": "trk_01",
+    "comparisons_per_project": 5
+  }
+  ```
+  *(Parameters optional: `event_id` defaults to latest, `track_id` defaults to all, `comparisons_per_project` defaults to 5).*
+- **Success Response (201 Created)**:
+  ```json
+  {
+    "message": "Pairwise assignment complete. Created 60 pair assignments.",
+    "createdCount": 60,
+    "metadata": {
+      "projectCount": 24,
+      "judgeCount": 6,
+      "canonicalPairCount": 60,
+      "totalAssignments": 60,
+      "targetComparisons": 5,
+      "underCoverageReason": null
+    }
+  }
+  ```
+- **Errors**: `404 Not Found` if event does not exist.
+
+#### `GET /api/organizer/pairwise/status` *(or `/api/pairwise/status`)*
+- **Purpose**: Real-time evaluation progress breakdown for Pairwise Mode. Returns overall pair counts, completed count, pending count, completion percentage, and individual judge completion metrics.
+- **Authentication**: Required
+- **Role**: `organizer`, `admin`
+- **Query Parameters**:
+  - `event_id` (optional): Hackathon event identifier.
+- **Success Response (200 OK)**:
+  ```json
+  {
+    "event_id": "evt_01",
+    "event_name": "DOGFOOD 2026",
+    "totals": {
+      "total": 60,
+      "completed": 45,
+      "pending": 15,
+      "completion_percentage": 75.0
+    },
+    "judges": [
+      {
+        "judge_id": "usr_jdg_01",
+        "judge_name": "Dr. Jane Smith",
+        "total_assigned": 10,
+        "completed": 8,
+        "pending": 2
+      }
+    ]
+  }
+  ```
+- **Errors**: `404 Not Found` if event does not exist.
+
+#### `GET /api/organizer/pairwise/rankings` *(or `/api/pairwise/rankings`)*
+- **Purpose**: Compute latent quality ratings and global/track rankings using the regularized Bradley-Terry Minorization-Maximization (MM) solver with 0.5 tie splitting and Bayesian virtual anchor prior. Audit logged.
+- **Authentication**: Required
+- **Role**: `organizer`, `admin`
+- **Query Parameters**:
+  - `event_id` (optional): Hackathon event identifier.
+  - `track_id` (optional): Filter calculation to projects within specific track.
+- **Success Response (200 OK)**:
+  ```json
+  {
+    "event_id": "evt_01",
+    "event_name": "DOGFOOD 2026",
+    "converged": true,
+    "iterations": 14,
+    "total_comparisons": 45,
+    "projects": [
+      {
+        "project_id": "prj_01",
+        "title": "Autonomous Neural Optimizer",
+        "track_id": "trk_01",
+        "track_name": "AI & Machine Learning",
+        "team_name": "Team Apollo",
+        "wins": 4,
+        "losses": 0,
+        "ties": 1,
+        "comparisons": 5,
+        "strength": 2.451829,
+        "lambda": 0.896834,
+        "rank": 1
+      }
+    ]
+  }
+  ```
+- **Errors**: `404 Not Found` if event does not exist.
 
 ---
 
@@ -979,6 +1212,39 @@ curl -s -X POST http://localhost:8080/api/webhooks \
   }' | jq .
 ```
 
+### 14. Generate Pairwise Assignments (Organizer)
+```bash
+curl -s -X POST http://localhost:8080/api/organizer/pairwise/assignments/generate \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer org_7f2a" \
+  -d '{"comparisons_per_project": 5}' | jq .
+```
+
+### 15. Inspect Assigned Comparison Pairs (Judge)
+```bash
+curl -s http://localhost:8080/api/judge/pairwise/assignments \
+  -H "Authorization: Bearer jdg_a_91bc" | jq .
+```
+
+### 16. Submit Pairwise Comparison (Judge)
+```bash
+curl -s -X POST http://localhost:8080/api/judge/pairwise/comparisons \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer jdg_a_91bc" \
+  -d '{
+    "pair_id": "pwp_a1b2c3d4",
+    "winner_id": "prj_01",
+    "is_tie": false,
+    "comment": "Project A demonstrated superior reliability and system design."
+  }' | jq .
+```
+
+### 17. Calculate Bradley-Terry Pairwise Rankings (Organizer)
+```bash
+curl -s http://localhost:8080/api/organizer/pairwise/rankings \
+  -H "Authorization: Bearer org_7f2a" | jq .
+```
+
 ---
 
 ## Security Notes
@@ -993,6 +1259,7 @@ The API enforces strict defense-in-depth security across all operations. For ful
 6. **Rate Limiting & Spam Cooldowns**: Memory-backed velocity limiters guard voting endpoints (`429 Too Many Requests`) and comment posting.
 7. **Webhook HMAC-SHA256 Signing**: Every webhook dispatch includes `X-Judgement-Signature: sha256=<hmac>` computed over the canonical JSON payload using the shared secret.
 8. **Ed25519 Verifiable Certificates**: Audit receipts and project certificates are signed using Edwards-curve Digital Signature Algorithm (Ed25519) under SPKI / RFC 8410.
+9. **Pairwise Isolation Barrier & Integrity**: Peer isolation guards intercept query-string tampering on pairwise endpoints (`403 Forbidden`). Winner integrity (`CHECK (winner_id in (A,B) or null if tie)`), canonical orientation (`CHECK (A < B)`), and duplicate prevention (`UNIQUE(judge_user_id, project_a_id, project_b_id)`) are rigidly enforced at the relational layer.
 
 ---
 

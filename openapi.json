@@ -68,6 +68,10 @@
     {
       "name": "Health",
       "description": "System uptime and readiness monitoring"
+    },
+    {
+      "name": "Pairwise",
+      "description": "Bonus B: Head-to-head pairwise comparisons, circulant chord scheduling, and regularized Bradley-Terry ranking"
     }
   ],
   "paths": {
@@ -6283,6 +6287,1165 @@
           }
         }
       }
+    },
+    "/api/judge/pairwise/assignments": {
+      "get": {
+        "tags": [
+          "Judging",
+          "Pairwise"
+        ],
+        "summary": "List pairwise comparison pairs assigned to current judge",
+        "description": "Lists all head-to-head project comparison pairs assigned to the calling judge. Enforces Judge Peer Isolation: probing peer assignments via query parameters (?judge=..., ?judge_id=...) is rejected with HTTP 403 Forbidden.",
+        "x-required-role": "judge",
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionHeader": []
+          },
+          {
+            "xSessionToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "judge",
+            "in": "query",
+            "description": "Tampering probe parameter; blocked with 403 if target != caller",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "judge_id",
+            "in": "query",
+            "description": "Tampering probe parameter; blocked with 403 if target != caller",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "judge_user_id",
+            "in": "query",
+            "description": "Tampering probe parameter; blocked with 403 if target != caller",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Assigned pairwise comparison pairs",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "judge_id": {
+                      "type": "string",
+                      "example": "usr_jdg_01"
+                    },
+                    "judge_name": {
+                      "type": "string",
+                      "example": "Dr. Jane Smith"
+                    },
+                    "pairs": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/PairwisePair"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Access forbidden (role insufficient or peer probing detected)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/judge/pairwise/assignments/{pairId}": {
+      "get": {
+        "tags": [
+          "Judging",
+          "Pairwise"
+        ],
+        "summary": "Fetch single assigned pairwise comparison pair",
+        "description": "Retrieves complete side-by-side details for an assigned comparison pair including full descriptions, repo URLs, live demos, and existing evaluation. Enforces strict ownership check.",
+        "x-required-role": "judge",
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionHeader": []
+          },
+          {
+            "xSessionToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "pairId",
+            "in": "path",
+            "required": true,
+            "description": "Unique identifier of assigned pair",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Single pairwise comparison pair detail",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "pair": {
+                      "$ref": "#/components/schemas/PairwisePair"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden: You are not assigned to evaluate this pair",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Pair assignment not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/judge/pairwise/comparisons": {
+      "post": {
+        "tags": [
+          "Judging",
+          "Pairwise"
+        ],
+        "summary": "Submit a pairwise comparison evaluation",
+        "description": "Records a head-to-head comparison between Project A and Project B for an assigned pair. Enforces winner integrity and duplicate comparison protection.",
+        "x-required-role": "judge",
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionHeader": []
+          },
+          {
+            "xSessionToken": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "pair_id"
+                ],
+                "properties": {
+                  "pair_id": {
+                    "type": "string",
+                    "example": "pwp_a1b2c3d4"
+                  },
+                  "winner_id": {
+                    "type": "string",
+                    "nullable": true,
+                    "example": "prj_01"
+                  },
+                  "is_tie": {
+                    "type": "boolean",
+                    "default": false,
+                    "example": false
+                  },
+                  "comment": {
+                    "type": "string",
+                    "example": "Project A demonstrated superior reliability and system design."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Comparison recorded successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "message": {
+                      "type": "string",
+                      "example": "Comparison recorded successfully"
+                    },
+                    "comparison_id": {
+                      "type": "string",
+                      "example": "pwc_9f1a2b"
+                    },
+                    "pair_id": {
+                      "type": "string",
+                      "example": "pwp_a1b2c3d4"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation failure (missing pair_id or winner/tie mismatch)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden: You are not assigned to evaluate this pair",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Pair assignment not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict: Comparison already submitted for this pair",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "Judging",
+          "Pairwise"
+        ],
+        "summary": "List comparisons submitted by the calling judge",
+        "description": "Retrieves all comparisons authored by the authenticated judge. Enforces Judge Peer Isolation: probing peer comparisons is rejected with HTTP 403 Forbidden.",
+        "x-required-role": "judge",
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionHeader": []
+          },
+          {
+            "xSessionToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "judge",
+            "in": "query",
+            "description": "Tampering probe parameter; blocked with 403 if target != caller",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "judge_id",
+            "in": "query",
+            "description": "Tampering probe parameter; blocked with 403 if target != caller",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Submitted pairwise comparisons",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "judge_id": {
+                      "type": "string",
+                      "example": "usr_jdg_01"
+                    },
+                    "comparisons": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/PairwiseComparison"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Access forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/organizer/pairwise/assignments/generate": {
+      "post": {
+        "tags": [
+          "Organizer",
+          "Pairwise"
+        ],
+        "summary": "Algorithmic pairwise assignment generation",
+        "description": "Generates balanced, track-aware pairwise comparison schedules using a k-regular circulant chord graph topology. Distributes canonical pairs (project_a_id < project_b_id) across eligible judges.",
+        "x-required-role": "organizer",
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionHeader": []
+          },
+          {
+            "xSessionToken": []
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "event_id": {
+                    "type": "string",
+                    "example": "evt_01"
+                  },
+                  "track_id": {
+                    "type": "string",
+                    "example": "trk_01"
+                  },
+                  "comparisons_per_project": {
+                    "type": "integer",
+                    "default": 5,
+                    "example": 5
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Pairwise assignments generated successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "message": {
+                      "type": "string",
+                      "example": "Pairwise assignment complete. Created 60 pair assignments."
+                    },
+                    "createdCount": {
+                      "type": "integer",
+                      "example": 60
+                    },
+                    "metadata": {
+                      "type": "object",
+                      "properties": {
+                        "projectCount": {
+                          "type": "integer",
+                          "example": 24
+                        },
+                        "judgeCount": {
+                          "type": "integer",
+                          "example": 6
+                        },
+                        "canonicalPairCount": {
+                          "type": "integer",
+                          "example": 60
+                        },
+                        "totalAssignments": {
+                          "type": "integer",
+                          "example": 60
+                        },
+                        "targetComparisons": {
+                          "type": "integer",
+                          "example": 5
+                        },
+                        "underCoverageReason": {
+                          "type": "string",
+                          "nullable": true
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Organizer role required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Event not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/pairwise/assignments/generate": {
+      "post": {
+        "tags": [
+          "Organizer",
+          "Pairwise"
+        ],
+        "summary": "Algorithmic pairwise assignment generation",
+        "description": "Generates balanced, track-aware pairwise comparison schedules using a k-regular circulant chord graph topology. Distributes canonical pairs (project_a_id < project_b_id) across eligible judges.",
+        "x-required-role": "organizer",
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionHeader": []
+          },
+          {
+            "xSessionToken": []
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "event_id": {
+                    "type": "string",
+                    "example": "evt_01"
+                  },
+                  "track_id": {
+                    "type": "string",
+                    "example": "trk_01"
+                  },
+                  "comparisons_per_project": {
+                    "type": "integer",
+                    "default": 5,
+                    "example": 5
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Pairwise assignments generated successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "message": {
+                      "type": "string",
+                      "example": "Pairwise assignment complete. Created 60 pair assignments."
+                    },
+                    "createdCount": {
+                      "type": "integer",
+                      "example": 60
+                    },
+                    "metadata": {
+                      "type": "object",
+                      "properties": {
+                        "projectCount": {
+                          "type": "integer",
+                          "example": 24
+                        },
+                        "judgeCount": {
+                          "type": "integer",
+                          "example": 6
+                        },
+                        "canonicalPairCount": {
+                          "type": "integer",
+                          "example": 60
+                        },
+                        "totalAssignments": {
+                          "type": "integer",
+                          "example": 60
+                        },
+                        "targetComparisons": {
+                          "type": "integer",
+                          "example": 5
+                        },
+                        "underCoverageReason": {
+                          "type": "string",
+                          "nullable": true
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Organizer role required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Event not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/organizer/pairwise/status": {
+      "get": {
+        "tags": [
+          "Organizer",
+          "Pairwise"
+        ],
+        "summary": "Pairwise judging progress and status breakdown",
+        "description": "Returns real-time progress metrics for Pairwise Mode, including total pairs, completed, pending, completion percentage, and individual judge completion statistics.",
+        "x-required-role": "organizer",
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionHeader": []
+          },
+          {
+            "xSessionToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "event_id",
+            "in": "query",
+            "description": "Filter by event ID",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Pairwise evaluation progress overview",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "event_id": {
+                      "type": "string",
+                      "example": "evt_01"
+                    },
+                    "event_name": {
+                      "type": "string",
+                      "example": "DOGFOOD 2026"
+                    },
+                    "totals": {
+                      "type": "object",
+                      "properties": {
+                        "total": {
+                          "type": "integer",
+                          "example": 60
+                        },
+                        "completed": {
+                          "type": "integer",
+                          "example": 45
+                        },
+                        "pending": {
+                          "type": "integer",
+                          "example": 15
+                        },
+                        "completion_percentage": {
+                          "type": "number",
+                          "example": 75
+                        }
+                      }
+                    },
+                    "judges": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "judge_id": {
+                            "type": "string",
+                            "example": "usr_jdg_01"
+                          },
+                          "judge_name": {
+                            "type": "string",
+                            "example": "Dr. Jane Smith"
+                          },
+                          "total_assigned": {
+                            "type": "integer",
+                            "example": 10
+                          },
+                          "completed": {
+                            "type": "integer",
+                            "example": 8
+                          },
+                          "pending": {
+                            "type": "integer",
+                            "example": 2
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Organizer role required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Event not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/pairwise/status": {
+      "get": {
+        "tags": [
+          "Organizer",
+          "Pairwise"
+        ],
+        "summary": "Pairwise judging progress and status breakdown",
+        "description": "Returns real-time progress metrics for Pairwise Mode, including total pairs, completed, pending, completion percentage, and individual judge completion statistics.",
+        "x-required-role": "organizer",
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionHeader": []
+          },
+          {
+            "xSessionToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "event_id",
+            "in": "query",
+            "description": "Filter by event ID",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Pairwise evaluation progress overview",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "event_id": {
+                      "type": "string",
+                      "example": "evt_01"
+                    },
+                    "event_name": {
+                      "type": "string",
+                      "example": "DOGFOOD 2026"
+                    },
+                    "totals": {
+                      "type": "object",
+                      "properties": {
+                        "total": {
+                          "type": "integer",
+                          "example": 60
+                        },
+                        "completed": {
+                          "type": "integer",
+                          "example": 45
+                        },
+                        "pending": {
+                          "type": "integer",
+                          "example": 15
+                        },
+                        "completion_percentage": {
+                          "type": "number",
+                          "example": 75
+                        }
+                      }
+                    },
+                    "judges": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "judge_id": {
+                            "type": "string",
+                            "example": "usr_jdg_01"
+                          },
+                          "judge_name": {
+                            "type": "string",
+                            "example": "Dr. Jane Smith"
+                          },
+                          "total_assigned": {
+                            "type": "integer",
+                            "example": 10
+                          },
+                          "completed": {
+                            "type": "integer",
+                            "example": 8
+                          },
+                          "pending": {
+                            "type": "integer",
+                            "example": 2
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Organizer role required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Event not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/organizer/pairwise/rankings": {
+      "get": {
+        "tags": [
+          "Organizer",
+          "Pairwise"
+        ],
+        "summary": "Calculate Bradley-Terry pairwise rankings",
+        "description": "Calculates project rankings and continuous latent quality ratings (lambda = ln(pi)) using the regularized Bradley-Terry Minorization-Maximization (MM) solver with 0.5 tie-splitting and Bayesian virtual anchor prior.",
+        "x-required-role": "organizer",
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionHeader": []
+          },
+          {
+            "xSessionToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "event_id",
+            "in": "query",
+            "description": "Filter by event ID",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "track_id",
+            "in": "query",
+            "description": "Filter calculation to projects within specific track",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Bradley-Terry solved project rankings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "event_id": {
+                      "type": "string",
+                      "example": "evt_01"
+                    },
+                    "event_name": {
+                      "type": "string",
+                      "example": "DOGFOOD 2026"
+                    },
+                    "converged": {
+                      "type": "boolean",
+                      "example": true
+                    },
+                    "iterations": {
+                      "type": "integer",
+                      "example": 14
+                    },
+                    "total_comparisons": {
+                      "type": "integer",
+                      "example": 45
+                    },
+                    "projects": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/PairwiseRankingProject"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Organizer role required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Event not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/pairwise/rankings": {
+      "get": {
+        "tags": [
+          "Organizer",
+          "Pairwise"
+        ],
+        "summary": "Calculate Bradley-Terry pairwise rankings",
+        "description": "Calculates project rankings and continuous latent quality ratings (lambda = ln(pi)) using the regularized Bradley-Terry Minorization-Maximization (MM) solver with 0.5 tie-splitting and Bayesian virtual anchor prior.",
+        "x-required-role": "organizer",
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionHeader": []
+          },
+          {
+            "xSessionToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "event_id",
+            "in": "query",
+            "description": "Filter by event ID",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "track_id",
+            "in": "query",
+            "description": "Filter calculation to projects within specific track",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Bradley-Terry solved project rankings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "event_id": {
+                      "type": "string",
+                      "example": "evt_01"
+                    },
+                    "event_name": {
+                      "type": "string",
+                      "example": "DOGFOOD 2026"
+                    },
+                    "converged": {
+                      "type": "boolean",
+                      "example": true
+                    },
+                    "iterations": {
+                      "type": "integer",
+                      "example": 14
+                    },
+                    "total_comparisons": {
+                      "type": "integer",
+                      "example": 45
+                    },
+                    "projects": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/PairwiseRankingProject"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Organizer role required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Event not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -7539,6 +8702,222 @@
                 "example": 123
               }
             }
+          }
+        }
+      },
+      "PairwisePair": {
+        "type": "object",
+        "properties": {
+          "pair_id": {
+            "type": "string",
+            "example": "pwp_a1b2c3d4"
+          },
+          "event_id": {
+            "type": "string",
+            "example": "evt_01"
+          },
+          "judge_user_id": {
+            "type": "string",
+            "example": "usr_jdg_01"
+          },
+          "track_id": {
+            "type": "string",
+            "nullable": true,
+            "example": "trk_01"
+          },
+          "pair_status": {
+            "type": "string",
+            "enum": [
+              "PENDING",
+              "COMPLETED"
+            ],
+            "example": "PENDING"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "project_a_id": {
+            "type": "string",
+            "example": "prj_01"
+          },
+          "project_b_id": {
+            "type": "string",
+            "example": "prj_02"
+          },
+          "project_a_title": {
+            "type": "string",
+            "example": "Autonomous Neural Optimizer"
+          },
+          "project_a_summary": {
+            "type": "string",
+            "example": "Distributed telemetry engine"
+          },
+          "project_a_description": {
+            "type": "string"
+          },
+          "project_a_repo_url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "project_a_demo_url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "team_a_name": {
+            "type": "string",
+            "example": "Team Apollo"
+          },
+          "project_b_title": {
+            "type": "string",
+            "example": "Quantum Sentry"
+          },
+          "project_b_summary": {
+            "type": "string",
+            "example": "High performance scanner"
+          },
+          "project_b_description": {
+            "type": "string"
+          },
+          "project_b_repo_url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "project_b_demo_url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "team_b_name": {
+            "type": "string",
+            "example": "Team Athena"
+          },
+          "comparison_id": {
+            "type": "string",
+            "nullable": true
+          },
+          "winner_id": {
+            "type": "string",
+            "nullable": true
+          },
+          "is_tie": {
+            "type": "integer",
+            "nullable": true,
+            "enum": [
+              0,
+              1
+            ]
+          },
+          "comment": {
+            "type": "string",
+            "nullable": true
+          }
+        }
+      },
+      "PairwiseComparison": {
+        "type": "object",
+        "properties": {
+          "comparison_id": {
+            "type": "string",
+            "example": "pwc_9f1a2b"
+          },
+          "pair_id": {
+            "type": "string",
+            "example": "pwp_a1b2c3d4"
+          },
+          "event_id": {
+            "type": "string",
+            "example": "evt_01"
+          },
+          "project_a_id": {
+            "type": "string",
+            "example": "prj_01"
+          },
+          "project_b_id": {
+            "type": "string",
+            "example": "prj_02"
+          },
+          "winner_id": {
+            "type": "string",
+            "nullable": true,
+            "example": "prj_01"
+          },
+          "is_tie": {
+            "type": "integer",
+            "enum": [
+              0,
+              1
+            ],
+            "example": 0
+          },
+          "comment": {
+            "type": "string",
+            "example": "Project A demonstrated superior reliability."
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "project_a_title": {
+            "type": "string"
+          },
+          "project_b_title": {
+            "type": "string"
+          }
+        }
+      },
+      "PairwiseRankingProject": {
+        "type": "object",
+        "properties": {
+          "project_id": {
+            "type": "string",
+            "example": "prj_01"
+          },
+          "title": {
+            "type": "string",
+            "example": "Autonomous Neural Optimizer"
+          },
+          "track_id": {
+            "type": "string",
+            "nullable": true,
+            "example": "trk_01"
+          },
+          "track_name": {
+            "type": "string",
+            "example": "Developer tools"
+          },
+          "team_name": {
+            "type": "string",
+            "example": "Team Apollo"
+          },
+          "wins": {
+            "type": "integer",
+            "example": 4
+          },
+          "losses": {
+            "type": "integer",
+            "example": 1
+          },
+          "ties": {
+            "type": "integer",
+            "example": 0
+          },
+          "comparisons": {
+            "type": "integer",
+            "example": 5
+          },
+          "strength": {
+            "type": "number",
+            "format": "double",
+            "example": 2.451829
+          },
+          "lambda": {
+            "type": "number",
+            "format": "double",
+            "example": 0.896834
+          },
+          "rank": {
+            "type": "integer",
+            "example": 1
           }
         }
       }

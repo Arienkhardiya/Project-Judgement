@@ -262,3 +262,96 @@ DOGFOOD 2026 utilizes **Ed25519 (RFC 8032 / RFC 8410)** Edwards-curve digital si
    - `X-Judgement-Signature`: `sha256=<HMAC-SHA256>` computed over canonical JSON payload using the webhook's private secret
    - `X-Judgement-Timestamp`: ISO 8601 UTC timestamp
 3. **Delivery Audit Receipts:** Outgoing delivery attempts and HTTP response status codes are permanently logged into the `webhook_deliveries` database table and inspectable by organizers via `GET /api/webhooks/deliveries`.
+
+---
+
+## 8. Bonus B — Pairwise Mode: Circulant Generation & Regularized Bradley-Terry Solver
+
+In addition to the absolute multi-criterion rubric evaluation (T2), Project Judgement features an optional, fully independent **Pairwise Comparison Mode** (Bonus B). Rather than assigning numeric marks across criteria, judges perform head-to-head comparisons between pairs of projects within an event or track.
+
+Pairwise Mode operates as an additive, non-disruptive layer:
+- The standard T2 absolute scoring engine and Empirical Bayes normalization remain default, active, and fully intact.
+- Organizers can selectively activate pairwise evaluation, generate comparison schedules, monitor real-time judging progress, and solve for latent project quality using a regularized Bradley-Terry probabilistic model.
+
+### 8.1. Deterministic Circulant Graph Assignment
+
+Generating pairwise assignments naively (e.g. all-pairs $O(K^2)$) scales poorly for real hackathons ($K=41$ projects yields $\approx 820$ pairs). Instead, the system uses a **$k$-regular circulant graph** generator to construct balanced comparison topologies targeting $k \approx 4-6$ comparisons per project:
+
+1. **Eligible Pool Selection:** Filters projects with `status = 'SUBMITTED'` and active judges qualified for the competition track.
+2. **Deterministic Permutation:** Projects are sorted lexicographically by `id` ($P = [p_0, p_1, \dots, p_{K-1}]$).
+3. **Circulant Chord Strides:** For target degree $k$, chords are placed at strides $s \in \{1, 2, \dots, \lfloor k/2 \rfloor\}$. Each project $i$ is linked to $(i + s) \pmod K$. If $k$ is odd, antipodal edges $(i + \lfloor K/2 \rfloor) \pmod K$ are included.
+4. **Canonical Ordering Invariant:** To prevent order-dependent duplicate pairs in the database, pair endpoints are strictly normalized such that:
+   $$\text{project\_a\_id} < \text{project\_b\_id}$$
+5. **Balanced Judge Load Balancing:** Canonical pairs are distributed across available judges using a round-robin schedule that balances per-judge workloads and enforces that no judge receives duplicate pairings:
+   $$\text{UNIQUE}(\text{judge\_user\_id}, \, \text{project\_a\_id}, \, \text{project\_b\_id})$$
+6. **Small-Graph Under-Coverage Handling:** If a track contains 0 or 1 project, 0 comparisons are generated. If a track contains 2 projects, exactly 1 canonical comparison is generated. The generation metadata explicitly records an `underCoverageReason` explaining topological bounds.
+
+### 8.2. Judge Evaluation Experience & Isolation Barrier
+
+Judges access their pairwise queue via the dedicated **Pairwise** tab in the Judge Portal:
+1. **Side-by-Side Evaluation:** For each assigned pair, the judge views comprehensive details for Project A and Project B (title, team, track, summary, full description, repository URL, live demo link).
+2. **Comparison Outcomes:** The judge chooses:
+   - **Project A Wins** (`winner_id = project_a_id`, `is_tie = 0`)
+   - **Project B Wins** (`winner_id = project_b_id`, `is_tie = 0`)
+   - **Tie / Equally Strong** (`winner_id = null`, `is_tie = 1`)
+   - Optional qualitative feedback/commentary.
+3. **Integrity Checks:**
+   - Winner must be one of the two projects in the pair (enforced at database schema level via CHECK constraint).
+   - Duplicate submissions for the same assigned pair are rejected with `HTTP 409 Conflict`.
+4. **Strict Peer Isolation Barrier:**
+   - As with absolute scoring, a judge can query only their own assigned pairs and submitted comparisons.
+   - Any query parameter attempting to inspect peer judges (e.g. `?judge=...`, `?judge_id=...`) is intercepted by the server and immediately rejected with `HTTP 403 Forbidden`.
+
+### 8.3. Mathematical Formulation: Regularized Bradley-Terry Model
+
+The pairwise solver estimates continuous latent quality ratings $\pi_i > 0$ (or log-ability $\lambda_i = \ln \pi_i$) for each project $i \in \{1, \dots, K\}$.
+
+#### 1. Bradley-Terry Choice Probability
+Under the classic Bradley-Terry model (Bradley & Terry, 1952), when project $i$ is compared to project $j$, the probability that $i$ is chosen over $j$ is:
+$$P(i \succ j) = \frac{\pi_i}{\pi_i + \pi_j} = \frac{e^{\lambda_i}}{e^{\lambda_i} + e^{\lambda_j}}$$
+
+#### 2. Half-Win Tie Approximation
+Hackathon comparisons frequently produce ties between close projects. Our engine employs the standard, computationally robust **0.5 half-win approximation** (Rao & Kupper 1967; Davidson 1970):
+- Each tie between $i$ and $j$ contributes $0.5$ effective wins to project $i$ and $0.5$ effective wins to project $j$:
+  $$W_i = \text{Wins}_i + 0.5 \cdot \text{Ties}_i$$
+- Each tie contributes $1$ total comparison to the match matrix ($n_{ij} = n_{ji} = \text{count}$).
+- *Note:* This formulation is a computationally tractable half-win approximation rather than a full threshold-parameterized Davidson or Rao-Kupper tie model.
+
+#### 3. Virtual Anchor Prior Regularization
+In standard maximum likelihood estimation (MLE), Bradley-Terry can diverge:
+- An undefeated project has $\lambda_i \to +\infty$.
+- A winless project has $\lambda_i \to -\infty$ ($\pi_i \to 0$).
+- Disconnected graph components (e.g. isolated competition tracks without cross-comparisons) lack a shared coordinate system, causing unregularized solvers to fail.
+
+To guarantee finite ratings, eliminate division-by-zero, and ground all graph components to a shared reference baseline, our engine incorporates a **Bayesian Virtual Anchor Prior** with pseudocount weight $\alpha > 0$ (default $\alpha = 1.0$) against a neutral reference anchor $\pi_0 = 1.0$:
+
+For each iteration $t$:
+$$\pi_i^{(t+1)} = \frac{W_i + \alpha}{\sum_{j \ne i} \frac{n_{ij}}{\pi_i^{(t)} + \pi_j^{(t)}} + \frac{2\alpha}{\pi_i^{(t)} + 1.0}}$$
+
+- **Scale Anchoring:** The virtual reference term $\frac{2\alpha}{\pi_i + 1.0}$ acts as a comparison against an anchor item with fixed strength $\pi_0 = 1.0$, anchoring all graph components to a unified scale.
+- **Strictly Positive Strengths:** Because $W_i + \alpha \ge \alpha > 0$ and the denominator is strictly positive, $\pi_i > 0$ and $\lambda_i = \ln \pi_i$ remain strictly finite for all projects.
+
+#### 4. Iterative Minorization-Maximization (MM) Algorithm
+The solver implements Hunter’s Minorization-Maximization (MM) algorithm (Hunter, 2004):
+1. **Deterministic Initialization:** $\pi_i^{(0)} = 1.0$ for all $i \in \{1, \dots, K\}$.
+2. **Update Rule:** Apply the regularized MM equation above synchronously across all projects.
+3. **Convergence Criterion:** Iterate until the maximum parameter shift across all items satisfies:
+   $$\max_i \left| \pi_i^{(t+1)} - \pi_i^{(t)} \right| < \epsilon \quad (\text{default } \epsilon = 10^{-6})$$
+   or until the maximum iteration ceiling is reached ($\text{maxIterations} = 100$).
+4. **Numerical Stability:** Guard bands ensure denominators never fall below $10^{-12}$ and updated strengths never drop below $10^{-6}$.
+
+#### 5. Deterministic Ranking & Tie-Breaking
+Once converged, projects are sorted deterministically:
+1. `lambda` ($\ln \pi_i$) descending (primary rating).
+2. `total_comparisons` descending (for differences $< 10^{-12}$).
+3. `project_id` ascending (lexicographical tiebreaker).
+
+Ranks $1 \dots K$ are assigned sequentially. Because all operations are purely deterministic, multiple executions over the same comparison data yield 100% bit-for-bit identical results.
+
+### 8.4. Organizer Control Plane
+
+Organizers manage Pairwise Mode via the **Pairwise Mode** tab in the Organizer Portal:
+1. **Assignment Dispatch:** One-click generation of balanced pair schedules across an entire event or partitioned by track, with configurable comparisons per project.
+2. **Live Progress Monitoring:** Real-time metrics tracking total pairs, completed comparisons, pending assignments, overall completion percentage, and individual judge completion progress.
+3. **Instant Bradley-Terry Solving:** Interactive recalculation displaying converged iterations, total comparisons ingested, project ranks, latent log-ability ($\lambda$), and win/loss/tie records.
+4. **Complementary Decision Support:** Organizers can compare Pairwise rankings directly against Empirical Bayes normalized rubric scores to validate consensus, surface underrated gems, or resolve tie-break decisions for top prizes.
