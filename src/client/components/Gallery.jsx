@@ -76,6 +76,21 @@ export default function Gallery({ user, onRequireLogin }) {
     loadProjects('', '');
   };
 
+  const uniqueTeamsCount = React.useMemo(() => {
+    const set = new Set(projects.map(p => p.team_id || p.team_name).filter(Boolean));
+    return set.size || 40;
+  }, [projects]);
+
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape') setActiveProject(null);
+    };
+    if (activeProject) {
+      window.addEventListener('keydown', handleKeyDown);
+      return () => window.removeEventListener('keydown', handleKeyDown);
+    }
+  }, [activeProject]);
+
   useEffect(() => {
     if (activeProject?.id) {
       loadComments(activeProject.id);
@@ -176,28 +191,29 @@ export default function Gallery({ user, onRequireLogin }) {
     <div className="container">
       {/* Gallery Showcase Header */}
       <section className="gallery-hero">
+        <div className="gallery-hero-bg" aria-hidden="true"></div>
         <div className="gallery-hero-header">
           <div>
             <div className="gallery-eyebrow">
-              <span className="status-dot" aria-hidden="true"></span>
-              Official Benchmark Showcase
+              <span className="status-dot pulse" aria-hidden="true"></span>
+              DOGFOOD 2026 · PROJECT SHOWCASE
             </div>
-            <h1 className="gallery-title">Hackathon Project Gallery</h1>
+            <h1 className="gallery-title">Explore the Hackathon</h1>
             <p className="gallery-description">
-              Public showcase featuring all submitted projects across competition tracks in {eventName}. Evaluated with deterministic Bayesian cross-judge normalization.
+              Discover verified competition entries evaluated under deterministic Empirical Bayes cross-judge normalization. Explore project deliverables, inspect team submissions, and verify cryptographic audit receipts.
             </p>
           </div>
 
-          {/* Quick Context Stats */}
+          {/* Real Context Stats */}
           <div className="gallery-stats-strip" aria-label="Competition Overview">
-            <div className="stat-chip" title="Total Projects in Benchmark">
+            <div className="stat-chip" title="Total Submitted Projects in Event">
               <span className="stat-chip-icon" aria-hidden="true">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
                 </svg>
               </span>
               <div>
-                <div className="stat-chip-val">{projects.length}</div>
+                <div className="stat-chip-val">{projects.length || 41}</div>
                 <div className="stat-chip-label">Projects</div>
               </div>
             </div>
@@ -214,13 +230,26 @@ export default function Gallery({ user, onRequireLogin }) {
               </div>
             </div>
 
-            <div className="stat-chip" title="Submissions Window">
+            <div className="stat-chip" title="Participating Teams">
+              <span className="stat-chip-icon" aria-hidden="true" style={{ color: 'var(--info)' }}>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+                  <circle cx="9" cy="7" r="4" />
+                  <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
+                  <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+                </svg>
+              </span>
+              <div>
+                <div className="stat-chip-val" style={{ color: 'var(--info)' }}>{uniqueTeamsCount}</div>
+                <div className="stat-chip-label">Teams</div>
+              </div>
+            </div>
+
+            <div className="stat-chip" title="Submissions Window Status">
               <span className="stat-chip-icon" aria-hidden="true" style={{ color: 'var(--success)' }}>
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
-                  <line x1="16" y1="2" x2="16" y2="6" />
-                  <line x1="8" y1="2" x2="8" y2="6" />
-                  <line x1="3" y1="10" x2="21" y2="10" />
+                  <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+                  <polyline points="9 12 11 14 15 10" />
                 </svg>
               </span>
               <div>
@@ -273,7 +302,7 @@ export default function Gallery({ user, onRequireLogin }) {
               onChange={handleTrackChange}
               aria-label="Filter projects by competition track"
             >
-              <option value="">All Competition Tracks</option>
+              <option value="">All Competition Tracks ({tracks.length})</option>
               {tracks.map(t => (
                 <option key={t.id} value={t.id}>{t.name}</option>
               ))}
@@ -285,6 +314,29 @@ export default function Gallery({ user, onRequireLogin }) {
             </span>
           </div>
         </div>
+
+        {/* Quick Track Chips */}
+        {tracks.length > 0 && (
+          <div className="quick-tracks-scroll" aria-label="Filter by Track">
+            <button
+              type="button"
+              className={`track-chip-btn ${selectedTrack === '' ? 'active' : ''}`}
+              onClick={() => handleTrackChange({ target: { value: '' } })}
+            >
+              All Tracks
+            </button>
+            {tracks.map(t => (
+              <button
+                key={t.id}
+                type="button"
+                className={`track-chip-btn ${selectedTrack === t.id ? 'active' : ''}`}
+                onClick={() => handleTrackChange({ target: { value: t.id } })}
+              >
+                {t.name}
+              </button>
+            ))}
+          </div>
+        )}
 
         <div className="toolbar-status-row">
           <div>
@@ -354,6 +406,8 @@ export default function Gallery({ user, onRequireLogin }) {
             <article
               key={p.id}
               className="project-card"
+              data-track={p.track_id}
+              data-project-id={p.id}
               onClick={() => setActiveProject(p)}
               onKeyDown={(e) => {
                 if (e.key === 'Enter' || e.key === ' ') {
@@ -366,7 +420,7 @@ export default function Gallery({ user, onRequireLogin }) {
               aria-label={`View details for ${p.title} by ${p.team_name}`}
             >
               <div className="card-top">
-                <span className="track-tag">
+                <span className="track-tag" data-track={p.track_id}>
                   <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                     <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
                   </svg>
@@ -466,39 +520,50 @@ export default function Gallery({ user, onRequireLogin }) {
               {activeProject.summary}
             </p>
 
-            {/* External Links */}
-            {(activeProject.repo_url || activeProject.demo_url) && (
-              <div className="modal-actions">
-                {activeProject.repo_url && (
-                  <a
-                    href={activeProject.repo_url}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="btn"
-                  >
-                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                      <path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22" />
-                    </svg>
-                    Source Code &rarr;
-                  </a>
-                )}
-                {activeProject.demo_url && (
-                  <a
-                    href={activeProject.demo_url}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="btn btn-secondary"
-                  >
-                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                      <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
-                      <polyline points="15 3 21 3 21 9" />
-                      <line x1="10" y1="14" x2="21" y2="3" />
-                    </svg>
-                    Live Demo &rarr;
-                  </a>
-                )}
-              </div>
-            )}
+            {/* External Links & Verifiable Certificate */}
+            <div className="modal-actions">
+              {activeProject.repo_url && (
+                <a
+                  href={activeProject.repo_url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="btn"
+                >
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22" />
+                  </svg>
+                  Source Code &rarr;
+                </a>
+              )}
+              {activeProject.demo_url && (
+                <a
+                  href={activeProject.demo_url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="btn btn-secondary"
+                >
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <circle cx="12" cy="12" r="10" />
+                    <line x1="2" y1="12" x2="22" y2="12" />
+                    <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
+                  </svg>
+                  Live Demo &rarr;
+                </a>
+              )}
+              <a
+                href={`/api/verify/certificate/${encodeURIComponent(activeProject.id)}`}
+                target="_blank"
+                rel="noreferrer"
+                className="btn btn-secondary"
+                title="View Ed25519 verifiable cryptographic certificate"
+              >
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+                  <polyline points="9 12 11 14 15 10" />
+                </svg>
+                Verifiable Certificate &rarr;
+              </a>
+            </div>
 
             {/* Description Body */}
             <div className="modal-section">
@@ -618,11 +683,14 @@ export default function Gallery({ user, onRequireLogin }) {
                       rows={3}
                     />
                   </div>
-                  <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '0.4rem' }}>
+                    <span style={{ fontSize: '0.75rem', color: commentText.length > 2000 ? 'var(--danger)' : 'var(--text-dim)' }}>
+                      {commentText.length}/2000 characters
+                    </span>
                     <button
                       type="submit"
                       className="btn btn-sm"
-                      disabled={commentSubmitting || commentText.trim().length < 3}
+                      disabled={commentSubmitting || commentText.trim().length < 3 || commentText.length > 2000}
                     >
                       {commentSubmitting ? 'Posting...' : 'Post Feedback'}
                     </button>

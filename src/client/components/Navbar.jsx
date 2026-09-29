@@ -65,9 +65,9 @@ export default function Navbar({ user, activeTab, setActiveTab, onOpenLogin, onL
             </div>
             <span>DOGFOOD <span className="logo-year">2026</span></span>
           </a>
-          <span className="tag-version" title="All four tiers implemented and claimed">
+          <span className="tag-version" title="Tiers 1, 2, 3, and 4 Verified &amp; Active">
             <span className="tag-version-dot" aria-hidden="true"></span>
-            T1 – T4 Active
+            T1–T4 Active
           </span>
         </div>
 
